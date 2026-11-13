@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  cccd-ekyc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cccd-ekyc-service:latest
+    container_name: cccd_ekyc_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=CCCD Vietnam eKYC Service
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DEBUG=false
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - VECLIB_MAXIMUM_THREADS=1
+      - NUMEXPR_NUM_THREADS=1
+      - THREAD_POOL_WORKERS=4
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4096M
+        reservations:
+          cpus: "1.0"
+          memory: 1024M

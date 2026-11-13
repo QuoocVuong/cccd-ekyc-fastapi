@@ -1,0 +1,27 @@
+# Python & Virtualenv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Models (tự động tải khi chạy scripts/download_models.py hoặc docker build)
+models/
+.insightface/
+
+# Environment & Local config
+.env
+.cache/
+.config/
+.gemini
+.gitconfig
+.bash_logout
+.bashrc
+.profile
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

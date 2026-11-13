@@ -1,0 +1,52 @@
+from typing import Optional
+from pydantic import BaseModel, Field
+
+
+class QRInfo(BaseModel):
+    """Thông tin trích xuất và giải mã từ mã QR trên thẻ CCCD."""
+    cccd_number: str = Field(..., description="Số định danh cá nhân 12 số")
+    old_cmnd: Optional[str] = Field(None, description="Số CMND 9 số cũ (nếu có)")
+    full_name: str = Field(..., description="Họ và tên chủ thẻ")
+    dob: str = Field(..., description="Ngày sinh định dạng DDMMYYYY")
+    gender: str = Field(..., description="Giới tính (Nam/Nữ)")
+    address: str = Field(..., description="Nơi thường trú")
+    issue_date: str = Field(..., description="Ngày cấp thẻ định dạng DDMMYYYY")
+
+
+class OCRInfo(BaseModel):
+    """Kết quả nhận diện OCR trên các vùng ROI và kết quả đối chiếu chéo."""
+    cccd_number: str = Field(..., description="Số CCCD nhận diện bằng RapidOCR")
+    full_name: str = Field(..., description="Họ tên nhận diện bằng RapidOCR")
+    cccd_match: bool = Field(..., description="Trùng khớp 100% số CCCD giữa OCR và QR")
+    name_match: bool = Field(..., description="Trùng khớp họ tên không dấu giữa OCR và QR")
+    confidence_score: float = Field(..., description="Điểm tin cậy trung bình của OCR")
+
+
+class ProcessingTimeMS(BaseModel):
+    """Thống kê chi tiết thời gian xử lý từng bước (milliseconds)."""
+    total_ms: float = Field(..., description="Tổng thời gian xử lý pipeline")
+    corner_detection_ms: float = Field(..., description="Bắt 4 góc thẻ và validate hình học")
+    perspective_warp_ms: float = Field(..., description="Nắn phẳng thẻ về chuẩn 1000x630")
+    quality_check_ms: float = Field(..., description="Kiểm tra mờ, lóa flash và moiré màn hình")
+    qr_and_face_parallel_ms: float = Field(..., description="Xử lý song song luồng QR và Face")
+    ocr_cross_verify_ms: float = Field(..., description="OCR vùng số/họ tên và đối chiếu chéo")
+
+
+class CCCDVerificationResponse(BaseModel):
+    """Schema phản hồi kết quả xác thực eKYC CCCD thành công."""
+    status: str = Field("success", description="Trạng thái xử lý")
+    is_valid: bool = Field(True, description="Thẻ hợp lệ và vượt qua toàn bộ kiểm tra")
+    rotated_180: bool = Field(False, description="Thẻ có bị xoay ngược 180 độ hay không")
+    qr_info: QRInfo = Field(..., description="Dữ liệu trích xuất từ QR")
+    ocr_info: OCRInfo = Field(..., description="Dữ liệu trích xuất và đối chiếu OCR")
+    portrait_base64: str = Field(..., description="Ảnh chân dung đã cắt chuẩn tỷ lệ 3x4 (Base64 JPEG)")
+    face_embedding: list[float] = Field(..., description="Vector đặc trưng khuôn mặt 512 chiều")
+    processing_time_ms: ProcessingTimeMS = Field(..., description="Đo lường hiệu năng từng công đoạn")
+
+
+class HealthResponse(BaseModel):
+    """Trạng thái hoạt động của hệ thống và các model Singleton."""
+    status: str = "healthy"
+    service: str = "CCCD Vietnam eKYC Backend"
+    version: str = "1.0.0"
+    models_loaded: dict[str, bool]

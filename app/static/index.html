@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CCCD Vietnam eKYC — Test & Benchmark Console</title>
+  <style>
+    :root {
+      --bg: #0b1120;
+      --surface: #111827;
+      --surface-2: #1f2937;
+      --border: #374151;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.12);
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.12);
+      --warning: #f59e0b;
+      --warning-bg: rgba(245, 158, 11, 0.12);
+      --radius: 12px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    header {
+      border-bottom: 1px solid var(--border);
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(10px);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #3b82f6, #10b981);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 16px;
+      color: #fff;
+    }
+
+    .brand h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .brand p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .health-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .pill.ok {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: var(--success-bg);
+      color: #6ee7b7;
+    }
+
+    .pill.err {
+      border-color: rgba(239, 68, 68, 0.4);
+      background: var(--danger-bg);
+      color: #fca5a5;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    main {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    @media (max-width: 960px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 28px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: rgba(31, 41, 55, 0.35);
+    }
+
+    .dropzone:hover,
+    .dropzone.dragover {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    .dropzone-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+    }
+
+    .dropzone-text {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .dropzone-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .preview-box {
+      margin-top: 16px;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #000;
+      display: none;
+      position: relative;
+    }
+
+    .preview-box img,
+    .preview-box video {
+      width: 100%;
+      max-height: 280px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      font-family: inherit;
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      flex: 1;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: #374151;
+    }
+
+    .tips {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      font-size: 12px;
+      color: #bfdbfe;
+    }
+
+    .tips ul {
+      padding-left: 18px;
+      margin-top: 6px;
+    }
+
+    .tips li {
+      margin-bottom: 3px;
+    }
+
+    /* Right Panel */
+    .empty-state {
+      text-align: center;
+      padding: 64px 20px;
+      color: var(--text-muted);
+    }
+
+    .empty-state h3 {
+      color: var(--text);
+      margin-bottom: 6px;
+      font-size: 16px;
+    }
+
+    .status-banner {
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .status-banner.success {
+      background: var(--success-bg);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+
+    .status-banner.error {
+      background: var(--danger-bg);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .status-title {
+      font-weight: 700;
+      font-size: 15px;
+      margin-bottom: 2px;
+    }
+
+    .status-banner.success .status-title {
+      color: #6ee7b7;
+    }
+
+    .status-banner.error .status-title {
+      color: #fca5a5;
+    }
+
+    .status-msg {
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .latency-badge {
+      font-size: 20px;
+      font-weight: 800;
+      padding: 6px 14px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.35);
+      white-space: nowrap;
+    }
+
+    .latency-badge.fast {
+      color: #6ee7b7;
+    }
+
+    .latency-badge.medium {
+      color: #fcd34d;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 160px 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    @media (max-width: 640px) {
+      .grid-2 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .portrait-wrap {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #000;
+      text-align: center;
+    }
+
+    .portrait-wrap img {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      object-fit: cover;
+      display: block;
+    }
+
+    .portrait-caption {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 6px;
+      background: var(--surface-2);
+    }
+
+    .info-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .info-table th,
+    .info-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+
+    .info-table th {
+      color: var(--text-muted);
+      font-weight: 500;
+      width: 145px;
+    }
+
+    .info-table td {
+      font-weight: 600;
+    }
+
+    .match-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+    }
+
+    .match-tag.ok {
+      background: var(--success-bg);
+      color: #6ee7b7;
+    }
+
+    .match-tag.fail {
+      background: var(--danger-bg);
+      color: #fca5a5;
+    }
+
+    .section-box {
+      background: rgba(31, 41, 55, 0.45);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+
+    .section-box h4 {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 10px;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 185px 1fr 68px;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+
+    .bar-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .bar-track {
+      height: 8px;
+      background: var(--surface-2);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    .bar-val {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .json-box {
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      color: #a5b4fc;
+      max-height: 240px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .spinner {
+      width: 15px;
+      height: 15px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-icon">ID</div>
+        <div>
+          <h1>CCCD Vietnam eKYC Console</h1>
+          <p>Pipeline Fail-Fast &bull; WeChatQR + InsightFace + RapidOCR</p>
+        </div>
+      </div>
+      <div class="health-bar" id="healthBar">
+        <span class="pill"><span class="dot"></span> Đang kiểm tra hệ thống...</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- Cột trái: Upload & Camera -->
+    <section class="card">
+      <div class="card-title">
+        <span>1. Chọn ảnh thẻ CCCD</span>
+        <a href="/docs" target="_blank" style="font-size:12px; color:#60a5fa; text-decoration:none;">Swagger Docs &rarr;</a>
+      </div>
+
+      <input type="file" id="fileInput" accept="image/*" hidden />
+      <div class="dropzone" id="dropzone">
+        <div class="dropzone-icon">🪪</div>
+        <div class="dropzone-text">Kéo thả ảnh CCCD vào đây hoặc bấm để chọn file</div>
+        <div class="dropzone-sub">Hỗ trợ JPG, PNG, WEBP &bull; Chụp đủ 4 góc thẻ</div>
+      </div>
+
+      <div class="preview-box" id="previewBox">
+        <img id="previewImg" alt="Ảnh CCCD xem trước" />
+        <video id="webcamVideo" autoplay playsinline style="display:none;"></video>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn-primary" id="verifyBtn" disabled>
+          Xác thực ngay
+        </button>
+        <button type="button" class="btn-secondary" id="webcamBtn">
+          📷 Camera
+        </button>
+      </div>
+
+      <div class="tips">
+        <strong>Lưu ý để đạt tỷ lệ thành công & tốc độ cao:</strong>
+        <ul>
+          <li>Đặt thẻ trên nền tối/tương phản, thấy đủ 4 góc (cách mép &ge; 8px).</li>
+          <li>Không bật flash gây lóa vùng mã QR hoặc vùng ảnh chân dung.</li>
+          <li>Không chụp lại qua màn hình điện tử (hệ thống có bộ lọc Moiré FFT).</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Cột phải: Kết quả trực quan -->
+    <section class="card" id="resultCard">
+      <div class="card-title">
+        <span>2. Kết quả xác thực &amp; Benchmark</span>
+        <span id="rotatedBadge" class="pill" style="display:none;">↻ Đã tự xoay 180°</span>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <h3>Chưa có dữ liệu kiểm tra</h3>
+        <p>Tải lên ảnh mặt trước CCCD gắn chip hoặc Thẻ Căn cước để chạy toàn bộ pipeline eKYC.</p>
+      </div>
+
+      <div id="resultContent" style="display:none;"></div>
+    </section>
+  </main>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const dropzone = document.getElementById("dropzone");
+    const previewBox = document.getElementById("previewBox");
+    const previewImg = document.getElementById("previewImg");
+    const webcamVideo = document.getElementById("webcamVideo");
+    const verifyBtn = document.getElementById("verifyBtn");
+    const webcamBtn = document.getElementById("webcamBtn");
+    const healthBar = document.getElementById("healthBar");
+    const emptyState = document.getElementById("emptyState");
+    const resultContent = document.getElementById("resultContent");
+    const rotatedBadge = document.getElementById("rotatedBadge");
+
+    let selectedFile = null;
+    let webcamStream = null;
+
+    // 1. Kiểm tra /health khi tải trang
+    async function loadHealth() {
+      try {
+        const res = await fetch("/health");
+        const data = await res.json();
+        const m = data.models_loaded || {};
+        healthBar.innerHTML = `
+          <span class="pill ${data.status === 'healthy' ? 'ok' : 'err'}"><span class="dot"></span> API: ${data.status}</span>
+          <span class="pill ${m.wechat_qr ? 'ok' : 'err'}"><span class="dot"></span> WeChatQR</span>
+          <span class="pill ${m.insightface ? 'ok' : 'err'}"><span class="dot"></span> InsightFace</span>
+          <span class="pill ${m.rapid_ocr ? 'ok' : 'err'}"><span class="dot"></span> RapidOCR</span>
+        `;
+      } catch (err) {
+        healthBar.innerHTML = `<span class="pill err"><span class="dot"></span> Mất kết nối API</span>`;
+      }
+    }
+    loadHealth();
+
+    // 2. Xử lý chọn file & kéo thả
+    dropzone.addEventListener("click", () => fileInput.click());
+
+    dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzone.classList.add("dragover");
+    });
+
+    dropzone.addEventListener("dragleave", () => {
+      dropzone.classList.remove("dragover");
+    });
+
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleFile(e.target.files[0]);
+      }
+    });
+
+    function stopWebcam() {
+      if (webcamStream) {
+        webcamStream.getTracks().forEach((t) => t.stop());
+        webcamStream = null;
+      }
+      webcamVideo.style.display = "none";
+      webcamBtn.textContent = "📷 Camera";
+    }
+
+    function handleFile(file) {
+      stopWebcam();
+      selectedFile = file;
+      const url = URL.createObjectURL(file);
+      previewImg.src = url;
+      previewImg.style.display = "block";
+      previewBox.style.display = "block";
+      verifyBtn.disabled = false;
+    }
+
+    // 3. Hỗ trợ chụp trực tiếp từ Webcam
+    webcamBtn.addEventListener("click", async () => {
+      if (webcamStream) {
+        // Chụp khung hình hiện tại từ webcam
+        const canvas = document.createElement("canvas");
+        canvas.width = webcamVideo.videoWidth;
+        canvas.height = webcamVideo.videoHeight;
+        canvas.getContext("2d").drawImage(webcamVideo, 0, 0);
+        canvas.toBlob((blob) => {
+          const captured = new File([blob], "webcam_cccd.jpg", { type: "image/jpeg" });
+          handleFile(captured);
+          runVerify();
+        }, "image/jpeg", 0.95);
+        return;
+      }
+
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        webcamVideo.srcObject = webcamStream;
+        webcamVideo.style.display = "block";
+        previewImg.style.display = "none";
+        previewBox.style.display = "block";
+        webcamBtn.textContent = "📸 Chụp & Kiểm tra";
+      } catch (err) {
+        alert("Không thể mở Camera: " + err.message);
+      }
+    });
+
+    // 4. Gọi API POST /api/v1/cccd/verify
+    verifyBtn.addEventListener("click", runVerify);
+
+    async function runVerify() {
+      if (!selectedFile) return;
+
+      verifyBtn.disabled = true;
+      verifyBtn.innerHTML = `<span class="spinner"></span> Đang xử lý...`;
+      emptyState.style.display = "none";
+      resultContent.style.display = "block";
+      rotatedBadge.style.display = "none";
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+
+      const t0 = performance.now();
+      try {
+        const res = await fetch("/api/v1/cccd/verify", {
+          method: "POST",
+          body: formData,
+        });
+        const clientMs = (performance.now() - t0).toFixed(1);
+        const data = await res.json();
+
+        if (!res.ok) {
+          renderError(res.status, data, clientMs);
+        } else {
+          renderSuccess(data, clientMs);
+        }
+      } catch (err) {
+        renderError(0, { error_code: "NETWORK_ERROR", message: err.message }, 0);
+      } finally {
+        verifyBtn.disabled = false;
+        verifyBtn.textContent = "Xác thực ngay";
+      }
+    }
+
+    function renderError(status, data, clientMs) {
+      const code = data.error_code || (data.detail && data.detail.code) || `HTTP_${status}`;
+      const msg = data.message || (data.detail && data.detail.message) || data.detail || "Xác thực thất bại.";
+      resultContent.innerHTML = `
+        <div class="status-banner error">
+          <div>
+            <div class="status-title">❌ Fail-Fast: ${escapeHtml(code)}</div>
+            <div class="status-msg">${escapeHtml(msg)}</div>
+          </div>
+          <div class="latency-badge medium">${clientMs} ms</div>
+        </div>
+        <div class="section-box">
+          <h4>Chi tiết JSON phản hồi</h4>
+          <div class="json-box">${escapeHtml(JSON.stringify(data, null, 2))}</div>
+        </div>
+      `;
+    }
+
+    function renderSuccess(data, clientMs) {
+      if (data.rotated_180) {
+        rotatedBadge.style.display = "inline-flex";
+        rotatedBadge.classList.add("ok");
+      }
+
+      const qr = data.qr_info;
+      const ocr = data.ocr_info;
+      const t = data.processing_time_ms;
+      const totalClass = t.total_ms <= 60 ? "fast" : "medium";
+
+      const steps = [
+        { label: "1. Bắt 4 góc & Hình học", ms: t.corner_detection_ms },
+        { label: "2. Nắn phẳng (1000x630)", ms: t.perspective_warp_ms },
+        { label: "3. Chất lượng & Anti-Spoof", ms: t.quality_check_ms },
+        { label: "4. Song song QR + InsightFace", ms: t.qr_and_face_parallel_ms },
+        { label: "5. OCR & Đối chiếu chéo", ms: t.ocr_cross_verify_ms },
+      ];
+
+      const barsHtml = steps.map((s) => {
+        const pct = t.total_ms > 0 ? Math.min(100, (s.ms / t.total_ms) * 100) : 0;
+        return `
+          <div class="bar-row">
+            <span>${s.label}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+            <span class="bar-val">${s.ms.toFixed(2)} ms</span>
+          </div>
+        `;
+      }).join("");
+
+      const embPreview = data.face_embedding.slice(0, 8).map((v) => v.toFixed(4)).join(", ");
+
+      // Bản rút gọn để hiển thị JSON dễ đọc
+      const jsonDisplay = {
+        ...data,
+        portrait_base64: data.portrait_base64.slice(0, 48) + "... (truncated)",
+        face_embedding: `[512 floats: ${embPreview}, ...]`,
+      };
+
+      resultContent.innerHTML = `
+        <div class="status-banner success">
+          <div>
+            <div class="status-title">✅ Xác thực CCCD hợp lệ</div>
+            <div class="status-msg">Vượt qua toàn bộ kiểm tra hình học, chống giả mạo &amp; đối chiếu chéo QR-OCR (Client RTT: ${clientMs} ms)</div>
+          </div>
+          <div class="latency-badge ${totalClass}">${t.total_ms.toFixed(1)} ms</div>
+        </div>
+
+        <div class="grid-2">
+          <div class="portrait-wrap">
+            <img src="${data.portrait_base64}" alt="Ảnh chân dung 3x4" />
+            <div class="portrait-caption">Chân dung 3x4 &bull; 512D Vector</div>
+          </div>
+
+          <div>
+            <table class="info-table">
+              <tr>
+                <th>Số CCCD</th>
+                <td>
+                  ${escapeHtml(qr.cccd_number)}
+                  <span class="match-tag ${ocr.cccd_match ? 'ok' : 'fail'}">
+                    ${ocr.cccd_match ? '✓ Khớp OCR 100%' : '✗ Sai lệch'}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <th>Họ và tên</th>
+                <td>
+                  ${escapeHtml(qr.full_name)}
+                  <span class="match-tag ${ocr.name_match ? 'ok' : 'fail'}">
+                    ${ocr.name_match ? '✓ Khớp OCR' : '✗ Sai lệch'}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <th>OCR đọc được</th>
+                <td style="color:var(--text-muted); font-weight:500;">
+                  ${escapeHtml(ocr.cccd_number)} &bull; ${escapeHtml(ocr.full_name)} (Conf: ${(ocr.confidence_score * 100).toFixed(1)}%)
+                </td>
+              </tr>
+              <tr><th>Ngày sinh</th><td>${formatDate(qr.dob)}</td></tr>
+              <tr><th>Giới tính</th><td>${escapeHtml(qr.gender)}</td></tr>
+              <tr><th>CMND cũ</th><td>${escapeHtml(qr.old_cmnd || "Không có")}</td></tr>
+              <tr><th>Nơi thường trú</th><td>${escapeHtml(qr.address)}</td></tr>
+              <tr><th>Ngày cấp</th><td>${formatDate(qr.issue_date)}</td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="section-box">
+          <h4>
+            <span>Phân rã thời gian xử lý trên Server</span>
+            <span style="color:var(--text-muted); font-weight:500;">Tổng: ${t.total_ms.toFixed(2)} ms</span>
+          </h4>
+          ${barsHtml}
+        </div>
+
+        <div class="section-box">
+          <h4>
+            <span>Face Embedding (512 chiều) &amp; JSON Response</span>
+            <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="copyEmbedding()">Copy 512D Vector</button>
+          </h4>
+          <div class="json-box">${escapeHtml(JSON.stringify(jsonDisplay, null, 2))}</div>
+        </div>
+      `;
+
+      window.__lastEmbedding = data.face_embedding;
+    }
+
+    function copyEmbedding() {
+      if (!window.__lastEmbedding) return;
+      navigator.clipboard.writeText(JSON.stringify(window.__lastEmbedding));
+      alert("Đã copy vector 512 chiều vào clipboard!");
+    }
+
+    function formatDate(ddmmyyyy) {
+      if (!ddmmyyyy || ddmmyyyy.length !== 8) return ddmmyyyy || "";
+      return `${ddmmyyyy.slice(0, 2)}/${ddmmyyyy.slice(2, 4)}/${ddmmyyyy.slice(4, 8)}`;
+    }
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """
+    Cấu hình hệ thống eKYC CCCD Việt Nam.
+    Bao gồm toàn bộ hằng số ngưỡng (thresholds) hình học, kiểm tra chất lượng,
+    tọa độ ROI cắt thẻ và đường dẫn tới các model.
+    """
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
+
+    # Server settings
+    APP_NAME: str = "CCCD Vietnam eKYC Service"
+    APP_VERSION: str = "1.0.0"
+    DEBUG: bool = False
+    HOST: str = "0.0.0.0"
+    PORT: int = 8000
+    WORKERS: int = 1
+    THREAD_POOL_WORKERS: int = 4
+
+    # Base Paths
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
+    MODELS_DIR: Path = BASE_DIR / "models"
+    WECHAT_QR_DIR: Path = MODELS_DIR / "wechat_qrcode"
+    DOCALIGNER_MODEL_PATH: Path = MODELS_DIR / "docaligner-lcnet100.onnx"
+    INSIGHTFACE_NAME: str = "buffalo_sc"
+
+    # 1. Kích thước & Tiền xử lý nắn phẳng thẻ
+    CARD_WARP_WIDTH: int = 1000
+    CARD_WARP_HEIGHT: int = 630
+    CORNER_DETECT_RESIZE_MAX: int = 640
+
+    # 2. Ngưỡng kiểm tra hình học (Geometric Validation)
+    MIN_CORNER_BORDER_DISTANCE: int = 8  # px, tối thiểu cách mép ảnh
+    MIN_CARD_AREA_RATIO: float = 0.22    # diện tích thẻ / toàn ảnh tối thiểu
+    MAX_CARD_AREA_RATIO: float = 0.92    # diện tích thẻ / toàn ảnh tối đa
+    MIN_CARD_ASPECT_RATIO: float = 1.35  # width / height tối thiểu
+    MAX_CARD_ASPECT_RATIO: float = 1.85  # width / height tối đa (chuẩn ID-1: 1.586)
+
+    # 3. Ngưỡng kiểm tra chất lượng & Chống giả mạo (Quality & Anti-Spoof)
+    MIN_SHARPNESS_LAPLACIAN_VAR: float = 85.0  # phương sai Laplacian chống mờ/nhòe
+    GLARE_V_THRESHOLD: int = 245              # HSV Value > 245
+    GLARE_S_THRESHOLD: int = 30               # HSV Saturation < 30
+    MAX_GLARE_CARD_RATIO: float = 0.04        # Lóa toàn thẻ tối đa 4%
+    MAX_GLARE_QR_RATIO: float = 0.02          # Lóa vùng QR tối đa 2%
+    MAX_GLARE_PORTRAIT_RATIO: float = 0.025   # Lóa vùng chân dung tối đa 2.5%
+    ENABLE_MOIRE_CHECK: bool = True           # Bật/tắt kiểm tra vân màn hình
+    MOIRE_MAX_PEAK_RATIO: float = 15.0        # Ngưỡng tỉ lệ đỉnh phổ tần số cao
+
+    # 4. Tọa độ ROI trên ảnh thẻ đã nắn phẳng 1000 x 630
+    # Định dạng (y1, y2, x1, x2)
+    ROI_QR: tuple[int, int, int, int] = (10, 290, 680, 990)
+    ROI_PORTRAIT: tuple[int, int, int, int] = (140, 580, 30, 370)
+    ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 390, 760)
+    ROI_FULL_NAME: tuple[int, int, int, int] = (320, 395, 385, 920)
+
+    # 5. Cắt ảnh chân dung & InsightFace
+    FACE_DET_SCORE_THRESHOLD: float = 0.65
+    FACE_CROP_WIDTH_SCALE: float = 1.60
+    FACE_CROP_HEIGHT_SCALE: float = 2.10
+    FACE_TOP_HEAD_MARGIN_RATIO: float = 0.45
+    INSIGHTFACE_DET_SIZE: tuple[int, int] = (320, 320)
+
+    # 6. Fallback Corner Detection
+    USE_ONNX_CORNER_DETECTOR: bool = True  # Dùng DocAligner ONNX hoặc Contour Fallback
+
+
+settings = Settings()

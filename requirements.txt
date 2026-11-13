@@ -1,0 +1,28 @@
+# Core FastAPI & ASGI server
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.28.0,<1.0.0
+python-multipart>=0.0.9
+pydantic>=2.6.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0
+
+# Numerical & ONNX Runtime (Pinned to numpy 1.x to ensure complete compatibility with insightface & onnxruntime)
+numpy>=1.24.3,<2.0.0
+onnxruntime>=1.17.0,<1.22.0
+
+# Computer Vision & QR Code
+opencv-contrib-python-headless>=4.8.0,<5.0.0
+zxing-cpp>=2.2.0
+pillow>=10.0.0
+
+# Face Recognition & Embedding (InsightFace buffalo_sc)
+insightface>=0.7.3
+
+# OCR (RapidOCR onnxruntime - recognition only on cropped ROIs)
+rapidocr-onnxruntime>=1.3.8
+
+# Utilities & Testing
+requests>=2.31.0
+qrcode[pil]>=7.4.2
+scikit-image>=0.22.0
+pytest>=8.0.0
+httpx>=0.27.0
