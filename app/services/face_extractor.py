@@ -42,13 +42,17 @@ class FaceExtractor:
             raise
 
     def process(
-        self, card_image: np.ndarray, face_roi: np.ndarray, roi_offset: Tuple[int, int]
+        self,
+        card_image: np.ndarray,
+        face_roi: np.ndarray,
+        roi_offset: Tuple[int, int],
+        crop_bounds: Optional[Tuple[int, int, int, int]] = None,
     ) -> Optional[Tuple[str, list[float]]]:
         """
         Nhận diện khuôn mặt trên vùng face_roi:
         - Chọn khuôn mặt lớn nhất có det_score >= 0.65.
-        - Mở rộng bbox (crop_w = fw * 1.60, crop_h = fh * 2.10, top_margin = 0.45 * crop_h).
-        - Cắt ảnh chân dung từ card_image gốc và encode Base64 JPEG.
+        - Mở rộng bbox chuẩn ảnh thẻ 3x4 (lấy trọn đầu, tóc, cổ và vai).
+        - Giới hạn chặt trong crop_bounds (khung ảnh chân dung dính trên CCCD) để KHÔNG bị lẹm ra ngoài nền thẻ hoặc cột chữ.
         - Trích xuất normed_embedding (512 chiều).
         Trả về (portrait_base64, face_embedding) hoặc None nếu không tìm thấy.
         """
@@ -81,7 +85,7 @@ class FaceExtractor:
         if fw <= 0 or fh <= 0:
             return None
 
-        # Quy đổi tọa độ về ảnh thẻ gốc (1000 x 630)
+        # Quy đổi tọa độ về ảnh thẻ gốc
         roi_y1, roi_x1 = roi_offset
         card_fx1 = fx1 + roi_x1
         card_fy1 = fy1 + roi_y1
@@ -91,18 +95,27 @@ class FaceExtractor:
         crop_w = int(fw * settings.FACE_CROP_WIDTH_SCALE)
         crop_h = int(fh * settings.FACE_CROP_HEIGHT_SCALE)
 
-        # Ưu tiên khoảng trống phía trên đỉnh đầu 0.45 * crop_h
+        # Ưu tiên khoảng trống phía trên đỉnh đầu
         crop_y1 = card_fy1 - int(crop_h * settings.FACE_TOP_HEAD_MARGIN_RATIO)
         crop_y2 = crop_y1 + crop_h
         crop_x1 = cx - crop_w // 2
         crop_x2 = crop_x1 + crop_w
 
-        # Giới hạn trong kích thước thẻ
+        # Giới hạn chặt trong khung ảnh chân dung trên CCCD (không lẹm ra ngoài)
         card_h, card_w = card_image.shape[:2]
-        crop_y1 = max(0, crop_y1)
-        crop_y2 = min(card_h, crop_y2)
-        crop_x1 = max(0, crop_x1)
-        crop_x2 = min(card_w, crop_x2)
+        if crop_bounds is not None:
+            by1, by2, bx1, bx2 = crop_bounds
+            by1 = max(0, by1)
+            by2 = min(card_h, by2)
+            bx1 = max(0, bx1)
+            bx2 = min(card_w, bx2)
+        else:
+            by1, by2, bx1, bx2 = 0, card_h, 0, card_w
+
+        crop_y1 = max(by1, crop_y1)
+        crop_y2 = min(by2, crop_y2)
+        crop_x1 = max(bx1, crop_x1)
+        crop_x2 = min(bx2, crop_x2)
 
         portrait_img = card_image[crop_y1:crop_y2, crop_x1:crop_x2]
         if portrait_img.size == 0:

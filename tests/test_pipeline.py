@@ -363,3 +363,67 @@ def test_vneid_screenshot_and_vietnamese_diacritics():
     assert res["portrait_base64"].startswith("data:image/jpeg;base64,")
     assert len(res["face_embedding"]) == 512
 
+
+def test_fail_fast_clipped_or_occluded_corner():
+    """Kiểm tra Fail-Fast khi thẻ bị cắt góc / che góc hoặc che thông tin ngay cả khi allow_screen=true."""
+    img_bytes = create_synthetic_cccd_image()
+    arr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    # Che góc trên-trái của thẻ bằng vùng đen (giả lập ngón tay/lẹm góc tại x=140..300, y=165..295)
+    img[165:295, 140:300] = (5, 5, 5)
+    _, buf = cv2.imencode(".jpg", img)
+
+    response = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&allow_screen=true",
+        files={"file": ("occluded_corner.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert response.status_code == 422
+    data = response.json()
+    assert data["status"] == "error"
+    assert data["error_code"] in ("GEOMETRIC_VALIDATION_ERROR", "IMAGE_QUALITY_ERROR")
+
+
+def test_vneid_2024_without_qr_screen():
+    """Kiểm tra đọc ảnh chụp màn hình VNeID mẫu mới (Căn cước 2024 không có QR mặt trước)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    screen = np.full((1280, 720, 3), (240, 244, 248), dtype=np.uint8)
+    astronaut = data.astronaut()
+    face = cv2.resize(astronaut[30:260, 160:340], (200, 260))
+    screen[120 : 120 + 260, 40 : 40 + 200] = cv2.cvtColor(face, cv2.COLOR_RGB2BGR)
+
+    pil_img = Image.fromarray(cv2.cvtColor(screen, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    try:
+        font_lg = ImageFont.truetype(font_path, 32)
+        font_md = ImageFont.truetype(font_path, 26)
+    except Exception:
+        font_lg = ImageFont.load_default()
+        font_md = ImageFont.load_default()
+
+    draw.text((270, 130), "CĂN CƯỚC ĐIỆN TỬ", fill=(160, 25, 25), font=font_lg)
+    draw.text((270, 200), "Số định danh cá nhân:", fill=(70, 70, 70), font=font_md)
+    draw.text((270, 240), "002099887766", fill=(15, 15, 15), font=font_lg)
+    draw.text((60, 430), "Họ, chữ đệm và tên khai sinh:", fill=(70, 70, 70), font=font_md)
+    draw.text((60, 470), "NGUYỄN THỊ ÁNH TUYẾT", fill=(15, 15, 15), font=font_lg)
+    draw.text((60, 540), "Ngày, tháng, năm sinh: 20/10/1998", fill=(30, 30, 30), font=font_md)
+    draw.text((60, 590), "Giới tính: Nữ", fill=(30, 30, 30), font=font_md)
+
+    screen_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode(".jpg", screen_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    response = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&allow_screen=true",
+        files={"file": ("vneid_2024.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert response.status_code == 200
+    res = response.json()
+    assert res["status"] == "success"
+    assert res["card_type"] == "VNEID_SCREEN"
+    assert res["qr_info"] is None
+    assert res["ocr_info"]["cccd_number"] == "002099887766"
+    assert "TUYẾT" in res["ocr_info"]["full_name"] or "TUYET" in res["ocr_info"]["full_name"]
+    assert res["portrait_base64"].startswith("data:image/jpeg;base64,")
+
+

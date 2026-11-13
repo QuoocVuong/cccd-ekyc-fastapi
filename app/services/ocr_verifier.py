@@ -96,10 +96,18 @@ class VietnameseTextRecognizer:
         if h <= 0 or w <= 0:
             return "", 0.0
 
-        # Resize giữ tỷ lệ về chiều cao chuẩn 32px
+        # Resize giữ tỷ lệ về chiều cao chuẩn 32px (INTER_CUBIC khi phóng to để giữ nét dấu tiếng Việt)
         new_w = max(32, int(round(w * 32.0 / h)))
+        interp = cv2.INTER_CUBIC if h < 32 else cv2.INTER_AREA
         rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-        resized = cv2.resize(rgb, (new_w, 32), interpolation=cv2.INTER_LINEAR)
+        resized = cv2.resize(rgb, (new_w, 32), interpolation=interp)
+
+        # Tăng tương phản nhẹ nếu vùng chữ bị mờ/nhạt nền
+        if float(np.std(resized)) < 32.0:
+            p_low, p_high = np.percentile(resized, (2, 98))
+            if p_high > p_low + 10:
+                resized = np.clip((resized.astype(np.float32) - p_low) * (255.0 / (p_high - p_low)), 0, 255).astype(np.uint8)
+
         arr = resized.astype(np.float32) / 255.0
         blob = np.transpose(arr, (2, 0, 1))[None, ...]
 
@@ -151,10 +159,9 @@ class OCRVerifier:
     def recognize_crop(self, crop_bgr: np.ndarray) -> Tuple[str, float]:
         """
         Nhận diện văn bản trên ảnh cắt ROI.
-        Ưu tiên AsterNet Vietnamese ONNX để đọc chuẩn tiếng Việt có dấu, fallback sang RapidOCR.
+        Ưu tiên AsterNet Vietnamese ONNX để đọc chuẩn tiếng Việt có dấu (nhanh ~35ms/ROI), fallback sang RapidOCR.
         """
         if self.vi_rec.is_ready:
-            # Nếu ROI cao (có thể chứa nhiều dòng hoặc khoảng trắng thừa), thử detect box bên trong trước nếu cao > 80px
             text, conf = self.vi_rec.recognize(crop_bgr)
             if text:
                 return text, conf
@@ -273,11 +280,14 @@ class OCRVerifier:
                 for box in sorted_boxes:
                     xs = [int(pt[0]) for pt in box]
                     ys = [int(pt[1]) for pt in box]
-                    # Padding 3px để không cắt mất dấu mũ/dấu nặng của chữ tiếng Việt
-                    x1 = max(0, min(xs) - 3)
-                    y1 = max(0, min(ys) - 3)
-                    x2 = min(img_w, max(xs) + 3)
-                    y2 = min(img_h, max(ys) + 3)
+                    bh = max(1, max(ys) - min(ys))
+                    # Padding động theo chiều cao dòng chữ để giữ nguyên dấu mũ/dấu nặng tiếng Việt
+                    pad_y = max(4, int(bh * 0.16))
+                    pad_x = max(5, int(bh * 0.20))
+                    x1 = max(0, min(xs) - pad_x)
+                    y1 = max(0, min(ys) - pad_y)
+                    x2 = min(img_w, max(xs) + pad_x)
+                    y2 = min(img_h, max(ys) + pad_y)
                     crop = image_bgr[y1:y2, x1:x2]
                     if crop.size == 0:
                         continue
@@ -304,25 +314,55 @@ class OCRVerifier:
 
         all_text = "\n".join(l["text"] for l in lines)
         cccd_match = re.search(r"\b\d{12}\b", all_text)
-        dates = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", all_text)
-        dob = dates[0] if len(dates) >= 1 else None
-        expiry_date = dates[1] if len(dates) >= 2 else None
 
-        gender = None
-        if re.search(r"\bNam\b", all_text, re.IGNORECASE):
-            gender = "Nam"
-        elif re.search(r"\bN[uữ]\b", all_text, re.IGNORECASE):
-            gender = "Nữ"
-
-        # Tìm họ tên từ dòng sau label "Họ và tên" / "Họ, chữ đệm và tên" hoặc dòng ngay sau số CCCD
-        full_name = None
+        # Bóc tách ngày sinh và ngày hết hạn theo label (hỗ trợ cả 2 mẫu CCCD 2021 & Căn cước 2024 / VNeID)
+        dob = None
+        expiry_date = None
         for i, l in enumerate(lines):
             t_low = l["text"].lower()
-            if ("họ và tên" in t_low or "chữ đệm và tên" in t_low or "full name" in t_low) and i + 1 < len(lines):
-                cand = lines[i + 1]["text"].strip()
-                if len(cand) >= 4 and not re.search(r"\d", cand):
-                    full_name = cand
-                    break
+            date_in_line = re.search(r"\b\d{2}/\d{2}/\d{4}\b", l["text"])
+            next_date = (
+                re.search(r"\b\d{2}/\d{2}/\d{4}\b", lines[i + 1]["text"])
+                if i + 1 < len(lines) else None
+            )
+            if dob is None and any(k in t_low for k in ("ngày sinh", "năm sinh", "date of birth")):
+                m = date_in_line or next_date
+                if m:
+                    dob = m.group(0)
+            elif expiry_date is None and any(k in t_low for k in ("có giá trị đến", "date of expiry", "giá trị đến")):
+                m = date_in_line or next_date
+                if m:
+                    expiry_date = m.group(0)
+
+        dates = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", all_text)
+        if dob is None and len(dates) >= 1:
+            dob = dates[0]
+        if expiry_date is None and len(dates) >= 2:
+            expiry_date = dates[1]
+
+        gender = None
+        if re.search(r"\bNam\b|\bMale\b", all_text, re.IGNORECASE):
+            gender = "Nam"
+        elif re.search(r"\bN[uữ]\b|\bFemale\b", all_text, re.IGNORECASE):
+            gender = "Nữ"
+
+        # Tìm họ tên từ label (cả mẫu cũ & mẫu mới 2024/VNeID) hoặc dòng in hoa ngay sau số CCCD
+        full_name = None
+        name_labels = ("họ và tên", "chữ đệm và tên", "tên khai sinh", "full name")
+        for i, l in enumerate(lines):
+            t_low = l["text"].lower()
+            if any(lbl in t_low for lbl in name_labels):
+                # Trường hợp cùng dòng dạng "Họ và tên: NGUYỄN VĂN A"
+                if ":" in l["text"]:
+                    after_colon = l["text"].split(":", 1)[1].strip()
+                    if len(after_colon) >= 4 and not re.search(r"\d", after_colon):
+                        full_name = after_colon
+                        break
+                if i + 1 < len(lines):
+                    cand = lines[i + 1]["text"].strip()
+                    if len(cand) >= 4 and not re.search(r"\d", cand):
+                        full_name = cand
+                        break
         if not full_name and cccd_match:
             num_str = cccd_match.group(0)
             for i, l in enumerate(lines):

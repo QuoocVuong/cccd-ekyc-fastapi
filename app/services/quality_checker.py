@@ -81,11 +81,54 @@ class QualityChecker:
                 f"{settings.MAX_GLARE_PORTRAIT_RATIO * 100:.1f}%). Vui lòng căn chỉnh ánh sáng tránh lóa khuôn mặt."
             )
 
+        # 4. Vùng thông tin chữ (Số CCCD, Họ tên, Ngày sinh...)
+        ty1, ty2, tx1, tx2 = settings.ROI_TEXT_ZONE
+        text_mask = glare_mask[ty1:ty2, tx1:tx2]
+        text_pixels = float(text_mask.shape[0] * text_mask.shape[1])
+        text_glare_ratio = float(np.count_nonzero(text_mask)) / text_pixels if text_pixels > 0 else 0.0
+
+        if text_glare_ratio > settings.MAX_GLARE_TEXT_RATIO:
+            raise ImageQualityError(
+                f"Vùng thông tin chữ trên thẻ bị lóa sáng ({text_glare_ratio * 100:.2f}% > "
+                f"{settings.MAX_GLARE_TEXT_RATIO * 100:.1f}%). Vui lòng đổi góc chụp để tránh chói chữ."
+            )
+
         return {
             "card_glare_ratio": card_glare_ratio,
             "qr_glare_ratio": qr_glare_ratio,
             "portrait_glare_ratio": face_glare_ratio,
+            "text_glare_ratio": text_glare_ratio,
         }
+
+    @staticmethod
+    def check_card_occlusion(card_bgr: np.ndarray, gray_card: np.ndarray) -> None:
+        """
+        Kiểm tra thẻ bị lẹm góc, mất góc (vùng đen do warp ngoài biên) hoặc bị che thẻ (ngón tay/vật cản).
+        """
+        h, w = gray_card.shape
+        patch = 60
+        corners_patches = [
+            ("trên-trái", gray_card[0:patch, 0:patch]),
+            ("trên-phải", gray_card[0:patch, w - patch : w]),
+            ("dưới-phải", gray_card[h - patch : h, w - patch : w]),
+            ("dưới-trái", gray_card[h - patch : h, 0:patch]),
+        ]
+        for corner_name, region in corners_patches:
+            black_ratio = float(np.count_nonzero(region < 12)) / float(region.size)
+            if black_ratio > 0.30 or float(np.mean(region)) < 25.0:
+                raise ImageQualityError(
+                    f"Phát hiện góc {corner_name} của thẻ bị lẹm, cắt góc hoặc bị che khuất. "
+                    "Vui lòng chụp trọn vẹn cả 4 góc thẻ."
+                )
+
+        # Kiểm tra vùng thông tin chữ có bị che bởi ngón tay / vật tối màu / đồng nhất bất thường
+        ty1, ty2, tx1, tx2 = settings.ROI_TEXT_ZONE
+        text_gray = gray_card[ty1:ty2, tx1:tx2]
+        if float(np.mean(text_gray)) < 28.0 or float(np.std(text_gray)) < 4.5:
+            raise ImageQualityError(
+                "Phát hiện vùng thông tin trên thẻ bị che khuất hoặc quá đồng nhất không đọc được chữ. "
+                "Vui lòng không che thẻ bằng tay hoặc vật cản."
+            )
 
     @staticmethod
     def check_screen_replay(gray_card: np.ndarray) -> float:
@@ -158,6 +201,7 @@ class QualityChecker:
         Trả về các chỉ số đo đạc để phục vụ debug/tinh chỉnh.
         """
         gray = cv2.cvtColor(card_bgr, cv2.COLOR_BGR2GRAY)
+        cls.check_card_occlusion(card_bgr, gray)
         sharpness = cls.check_sharpness(gray)
         brightness = cls.check_brightness(gray)
         glare_metrics = cls.check_glare(card_bgr)
@@ -168,5 +212,6 @@ class QualityChecker:
             "glare_card_pct": round(glare_metrics["card_glare_ratio"] * 100.0, 2),
             "glare_qr_pct": round(glare_metrics["qr_glare_ratio"] * 100.0, 2),
             "glare_portrait_pct": round(glare_metrics["portrait_glare_ratio"] * 100.0, 2),
+            "glare_text_pct": round(glare_metrics["text_glare_ratio"] * 100.0, 2),
             "moire_score": round(moire_score, 2),
         }

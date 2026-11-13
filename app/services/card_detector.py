@@ -90,6 +90,35 @@ def validate_geometry(corners: Optional[np.ndarray], orig_w: int, orig_h: int) -
             "Thẻ bị chụp quá nghiêng, méo hoặc sai định dạng."
         )
 
+    # 4. Kiểm tra độ cân xứng 2 cạnh đối diện (phát hiện lẹm góc / nghiêng méo mạnh)
+    w_sym = min(width_top, width_bot) / max(width_top, width_bot) if max(width_top, width_bot) > 0 else 0.0
+    h_sym = min(height_left, height_right) / max(height_left, height_right) if max(height_left, height_right) > 0 else 0.0
+    if w_sym < settings.MIN_OPPOSITE_SIDE_RATIO or h_sym < settings.MIN_OPPOSITE_SIDE_RATIO:
+        raise GeometricValidationError(
+            "Thẻ CCCD bị biến dạng phối cảnh, lẹm cạnh hoặc mất góc (hai cạnh đối diện không cân xứng). "
+            "Vui lòng đặt thẻ phẳng và chụp thẳng góc."
+        )
+
+    # 5. Kiểm tra 4 góc nội giác (chuẩn chữ nhật 90°, cho phép [68°, 112°], chống cắt góc/che góc)
+    pts = [tl, tr, br, bl]
+    for i in range(4):
+        p_prev = pts[(i - 1) % 4]
+        p_curr = pts[i]
+        p_next = pts[(i + 1) % 4]
+        v1 = p_prev - p_curr
+        v2 = p_next - p_curr
+        n1 = float(np.linalg.norm(v1))
+        n2 = float(np.linalg.norm(v2))
+        if n1 < 1e-3 or n2 < 1e-3:
+            raise GeometricValidationError("Phát hiện góc thẻ bị suy biến (cạnh bằng 0).")
+        cos_ang = float(np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0))
+        angle_deg = float(np.degrees(np.arccos(cos_ang)))
+        if angle_deg < settings.MIN_CORNER_ANGLE_DEG or angle_deg > settings.MAX_CORNER_ANGLE_DEG:
+            raise GeometricValidationError(
+                f"Góc thẻ thứ {i+1} bị cắt góc, che góc hoặc biến dạng ({angle_deg:.1f}°). "
+                "Vui lòng chụp đầy đủ cả 4 góc vuông của thẻ."
+            )
+
     return corners
 
 

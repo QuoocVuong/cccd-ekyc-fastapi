@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     MAX_CARD_AREA_RATIO: float = 0.95     # Diện tích thẻ / toàn ảnh tối đa
     MIN_CARD_ASPECT_RATIO: float = 1.30   # width / height tối thiểu
     MAX_CARD_ASPECT_RATIO: float = 1.90   # width / height tối đa (chuẩn ID-1: 1.586)
+    MIN_CORNER_ANGLE_DEG: float = 72.0    # Góc nội giác tối thiểu (chống cắt góc / che góc)
+    MAX_CORNER_ANGLE_DEG: float = 108.0   # Góc nội giác tối đa
+    MIN_OPPOSITE_SIDE_RATIO: float = 0.86 # Tỷ lệ cân xứng 2 cạnh đối diện tối thiểu
 
     # 3. Ngưỡng kiểm tra chất lượng & Chống giả mạo (Quality & Anti-Spoof)
     MIN_SHARPNESS_LAPLACIAN_VAR: float = 65.0  # Phương sai Laplacian chống mờ/nhòe (tinh chỉnh cho ảnh thực tế)
@@ -53,6 +56,7 @@ class Settings(BaseSettings):
     MAX_GLARE_CARD_RATIO: float = 0.08         # Lóa toàn thẻ tối đa 8%
     MAX_GLARE_QR_RATIO: float = 0.05           # Lóa vùng QR tối đa 5%
     MAX_GLARE_PORTRAIT_RATIO: float = 0.06     # Lóa vùng chân dung tối đa 6%
+    MAX_GLARE_TEXT_RATIO: float = 0.08         # Lóa vùng thông tin chữ tối đa 8%
     ENABLE_MOIRE_CHECK: bool = True            # Bật/tắt kiểm tra vân màn hình
     MOIRE_MAX_PEAK_RATIO: float = 55.0         # Ngưỡng tỉ lệ đỉnh phổ tần số cao
 
@@ -60,14 +64,16 @@ class Settings(BaseSettings):
     # Định dạng (y1, y2, x1, x2)
     ROI_QR: tuple[int, int, int, int] = (10, 290, 680, 990)
     ROI_PORTRAIT: tuple[int, int, int, int] = (130, 595, 25, 375)
+    ROI_PORTRAIT_INNER: tuple[int, int, int, int] = (165, 565, 45, 335)  # Khung dính chặt trong ảnh 3x4, không lẹm ra thẻ
+    ROI_TEXT_ZONE: tuple[int, int, int, int] = (230, 560, 360, 940)
     ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 365, 760)
     ROI_FULL_NAME: tuple[int, int, int, int] = (325, 395, 360, 930)
 
-    # 5. Cắt ảnh chân dung (lấy toàn bộ chân dung 3x4 gồm đầu + vai), InsightFace & Face Matching
+    # 5. Cắt ảnh chân dung (lấy toàn bộ chân dung 3x4 gồm đầu + vai, không lẹm), InsightFace & Face Matching
     FACE_DET_SCORE_THRESHOLD: float = 0.65
     FACE_MATCH_SIMILARITY_THRESHOLD: float = 0.40  # Ngưỡng Cosine Similarity InsightFace buffalo_sc
-    FACE_CROP_WIDTH_SCALE: float = 2.05
-    FACE_CROP_HEIGHT_SCALE: float = 2.65
+    FACE_CROP_WIDTH_SCALE: float = 1.85
+    FACE_CROP_HEIGHT_SCALE: float = 2.45
     FACE_TOP_HEAD_MARGIN_RATIO: float = 0.36
     INSIGHTFACE_DET_SIZE: tuple[int, int] = (320, 320)
 

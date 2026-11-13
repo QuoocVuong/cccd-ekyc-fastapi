@@ -93,13 +93,14 @@ class CCCDProcessor:
         fy1, fy2, fx1, fx2 = settings.ROI_PORTRAIT
         face_crop = warped_card[fy1:fy2, fx1:fx2]
 
-        # Đẩy vào ThreadPoolExecutor
+        # Đẩy vào ThreadPoolExecutor (giới hạn chặt ảnh chân dung trong ROI_PORTRAIT_INNER để không lẹm ra thẻ)
         future_qr = self.executor.submit(self.qr_reader.decode_raw, qr_crop)
         future_face = self.executor.submit(
             self.face_extractor.process,
             warped_card,
             face_crop,
-            (fy1, fx1)
+            (fy1, fx1),
+            settings.ROI_PORTRAIT_INNER,
         )
 
         raw_qr_text = future_qr.result()
@@ -311,13 +312,13 @@ class CCCDProcessor:
             card_type = "CAN_CUOC_2024"
             full_ocr = self.ocr_verifier.extract_full_card_ocr(warped)
             cccd_num = full_ocr.get("cccd_number") or ""
-            # Tìm dòng họ tên in hoa dài nhất sau dòng số CCCD
             raw_lines = full_ocr.get("raw_lines", [])
-            name_guess = ""
-            for idx, line in enumerate(raw_lines):
-                if cccd_num and cccd_num in line["text"] and idx + 1 < len(raw_lines):
-                    name_guess = raw_lines[idx + 1]["text"]
-                    break
+            name_guess = full_ocr.get("full_name") or ""
+            if not name_guess:
+                for idx, line in enumerate(raw_lines):
+                    if cccd_num and cccd_num in line["text"] and idx + 1 < len(raw_lines):
+                        name_guess = raw_lines[idx + 1]["text"]
+                        break
             avg_conf = (
                 sum(l["confidence"] for l in raw_lines) / len(raw_lines)
                 if raw_lines else 0.0
