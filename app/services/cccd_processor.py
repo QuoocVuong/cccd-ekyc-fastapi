@@ -125,14 +125,32 @@ class CCCDProcessor:
         card_type: str,
         card_side: str,
         mrz_info=None,
+        corners: Optional[np.ndarray] = None,
+        orig_w: int = 0,
+        orig_h: int = 0,
     ) -> list[str]:
         warnings: list[str] = []
         if quality_metrics:
             b = quality_metrics.get("brightness", 128.0)
             if 0.0 < b < 70.0:
-                warnings.append("Độ sáng ảnh hơi thấp, nên chụp nơi đủ sáng hơn để tăng độ chính xác.")
-            if quality_metrics.get("glare_card_pct", 0.0) > 3.0:
-                warnings.append("Phát hiện phản quang nhẹ trên bề mặt thẻ.")
+                warnings.append("Cảnh báo thiếu sáng: Độ sáng ảnh hơi thấp, nên chụp nơi đủ sáng hơn.")
+            g_card = quality_metrics.get("glare_card_pct", 0.0)
+            g_qr = quality_metrics.get("glare_qr_pct", 0.0)
+            g_face = quality_metrics.get("glare_portrait_pct", 0.0)
+            g_text = quality_metrics.get("glare_text_pct", 0.0)
+            if g_card > 1.5 or g_qr > 1.0 or g_face > 1.5 or g_text > 1.5:
+                warnings.append(
+                    f"Cảnh báo lóa thẻ nhẹ (Toàn thẻ: {g_card}%, QR: {g_qr}%, Chân dung: {g_face}%, Chữ: {g_text}%). "
+                    "Nên tắt flash hoặc nghiêng nhẹ thẻ để tránh chói."
+                )
+        if corners is not None and orig_w > 0 and orig_h > 0:
+            near_margin = 16.0
+            for x, y in corners:
+                if x < near_margin or y < near_margin or x > (orig_w - near_margin) or y > (orig_h - near_margin):
+                    warnings.append(
+                        "Cảnh báo lẹm thẻ / sát mép: Có góc thẻ nằm gần viền ảnh, nên đặt thẻ lùi vào giữa khung hình."
+                    )
+                    break
         if card_type == "CAN_CUOC_2024" and card_side == "FRONT":
             warnings.append("Thẻ Căn cước 2024 không có mã QR ở mặt trước; khuyến nghị chụp thêm mặt sau để đọc QR/MRZ.")
         if mrz_info is not None and not mrz_info.checksum_valid:
@@ -422,7 +440,10 @@ class CCCDProcessor:
             )
             ocr_cross_verify_ms = (time.perf_counter() - t_back0) * 1000.0
             req_id, ts = self._new_meta()
-            warnings = self._collect_warnings(quality_metrics, card_type, "BACK", mrz_info)
+            warnings = self._collect_warnings(
+                quality_metrics, card_type, "BACK", mrz_info,
+                corners=validated_corners, orig_w=orig_w, orig_h=orig_h,
+            )
             total_ms = (time.perf_counter() - t_start) * 1000.0
 
             return CCCDVerificationResponse(
@@ -594,7 +615,7 @@ class CCCDProcessor:
         else:
             warped = img
 
-        ocr_data = self.ocr_verifier.extract_full_card_ocr(warped)
+        ocr_data = self.ocr_verifier.extract_full_card_ocr(warped, executor=self.executor)
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         return BasicOCRResponse(

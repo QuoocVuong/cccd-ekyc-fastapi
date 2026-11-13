@@ -156,13 +156,35 @@ class OCRVerifier:
             logger.error(f"Lỗi khởi tạo RapidOCR: {e}")
             raise
 
+    @staticmethod
+    def _tight_trim_text_roi(crop_bgr: np.ndarray) -> np.ndarray:
+        """Cắt bỏ phần nền trống xung quanh chữ (< 0.2ms) để AsterNet chạy nhanh và chuẩn hơn."""
+        if crop_bgr is None or crop_bgr.size == 0:
+            return crop_bgr
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        mean_v = float(np.mean(gray))
+        thresh = min(170.0, max(60.0, mean_v - 30.0))
+        mask = gray < thresh
+        if np.count_nonzero(mask) < 15:
+            return crop_bgr
+        ys, xs = np.where(mask)
+        h, w = crop_bgr.shape[:2]
+        y1 = max(0, int(ys.min()) - 5)
+        y2 = min(h, int(ys.max()) + 6)
+        x1 = max(0, int(xs.min()) - 6)
+        x2 = min(w, int(xs.max()) + 7)
+        if (y2 - y1) >= 10 and (x2 - x1) >= 16:
+            return crop_bgr[y1:y2, x1:x2]
+        return crop_bgr
+
     def recognize_crop(self, crop_bgr: np.ndarray) -> Tuple[str, float]:
         """
         Nhận diện văn bản trên ảnh cắt ROI.
-        Ưu tiên AsterNet Vietnamese ONNX để đọc chuẩn tiếng Việt có dấu (nhanh ~35ms/ROI), fallback sang RapidOCR.
+        Cắt gọn nền thừa rồi chạy AsterNet Vietnamese ONNX (nhanh & chuẩn tiếng Việt có dấu).
         """
         if self.vi_rec.is_ready:
-            text, conf = self.vi_rec.recognize(crop_bgr)
+            trimmed = self._tight_trim_text_roi(crop_bgr)
+            text, conf = self.vi_rec.recognize(trimmed)
             if text:
                 return text, conf
 
@@ -258,12 +280,12 @@ class OCRVerifier:
             confidence_score=round(avg_conf, 4),
         )
 
-    def extract_full_card_ocr(self, image_bgr: np.ndarray) -> dict:
+    def extract_full_card_ocr(self, image_bgr: np.ndarray, executor=None) -> dict:
         """
-        OCR cơ bản toàn bộ văn bản tiếng Việt có dấu trên mặt thẻ CCCD hoặc ảnh chụp màn hình VNeID:
-        1. Dùng RapidOCR Text Detection (use_det=True, use_rec=False) để lấy tất cả các dòng chữ.
-        2. Dùng AsterNet Vietnamese ONNX nhận diện từng dòng chuẩn tiếng Việt có dấu.
-        3. Bóc tách cấu trúc các trường thông tin quan trọng (Số CCCD, Họ tên, Ngày sinh, Giới tính...).
+        OCR toàn bộ văn bản tiếng Việt có dấu trên mặt thẻ CCCD hoặc ảnh chụp màn hình VNeID:
+        1. Downscale nhẹ nếu ảnh lớn > 960px để RapidOCR Text Detection chạy nhanh gấp đôi.
+        2. Cắt từng dòng từ ảnh gốc (padding động giữ dấu mũ/dấu nặng) và chạy AsterNet song song.
+        3. Bóc tách cấu trúc chuẩn các trường thông tin (Số CCCD, Họ tên, Ngày sinh, Giới tính, Hạn).
         """
         if self.engine is None:
             raise RuntimeError("RapidOCR engine chưa sẵn sàng.")
@@ -272,16 +294,26 @@ class OCRVerifier:
         lines: list[dict] = []
 
         if self.vi_rec.is_ready:
-            # Chỉ chạy Detection để lấy bounding boxes chính xác
-            det_res, _ = self.engine(image_bgr, use_det=True, use_cls=False, use_rec=False)
+            max_dim = max(img_h, img_w)
+            if max_dim > 960:
+                det_scale = 960.0 / max_dim
+                det_img = cv2.resize(
+                    image_bgr,
+                    (int(img_w * det_scale), int(img_h * det_scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
+            else:
+                det_scale = 1.0
+                det_img = image_bgr
+
+            det_res, _ = self.engine(det_img, use_det=True, use_cls=False, use_rec=False)
             if det_res:
-                # Sắp xếp boxes từ trên xuống dưới, trái sang phải
                 sorted_boxes = sorted(det_res, key=lambda b: (min(pt[1] for pt in b), min(pt[0] for pt in b)))
+                crops_meta = []
                 for box in sorted_boxes:
-                    xs = [int(pt[0]) for pt in box]
-                    ys = [int(pt[1]) for pt in box]
+                    xs = [int(round(pt[0] / det_scale)) for pt in box]
+                    ys = [int(round(pt[1] / det_scale)) for pt in box]
                     bh = max(1, max(ys) - min(ys))
-                    # Padding động theo chiều cao dòng chữ để giữ nguyên dấu mũ/dấu nặng tiếng Việt
                     pad_y = max(4, int(bh * 0.16))
                     pad_x = max(5, int(bh * 0.20))
                     x1 = max(0, min(xs) - pad_x)
@@ -289,9 +321,15 @@ class OCRVerifier:
                     x2 = min(img_w, max(xs) + pad_x)
                     y2 = min(img_h, max(ys) + pad_y)
                     crop = image_bgr[y1:y2, x1:x2]
-                    if crop.size == 0:
-                        continue
-                    text, conf = self.vi_rec.recognize(crop)
+                    if crop.size > 0:
+                        crops_meta.append((box, crop))
+
+                if executor is not None and len(crops_meta) > 1:
+                    rec_results = list(executor.map(self.vi_rec.recognize, [c for _, c in crops_meta]))
+                else:
+                    rec_results = [self.vi_rec.recognize(c) for _, c in crops_meta]
+
+                for (box, _), (text, conf) in zip(crops_meta, rec_results):
                     if text:
                         lines.append({
                             "text": text,
@@ -299,7 +337,6 @@ class OCRVerifier:
                             "box": box,
                         })
         else:
-            # Fallback nếu không có AsterNet
             results, _ = self.engine(image_bgr, use_det=True, use_cls=False, use_rec=True)
             if results:
                 for item in results:
@@ -315,7 +352,6 @@ class OCRVerifier:
         all_text = "\n".join(l["text"] for l in lines)
         cccd_match = re.search(r"\b\d{12}\b", all_text)
 
-        # Bóc tách ngày sinh và ngày hết hạn theo label (hỗ trợ cả 2 mẫu CCCD 2021 & Căn cước 2024 / VNeID)
         dob = None
         expiry_date = None
         for i, l in enumerate(lines):
@@ -346,29 +382,36 @@ class OCRVerifier:
         elif re.search(r"\bN[uữ]\b|\bFemale\b", all_text, re.IGNORECASE):
             gender = "Nữ"
 
-        # Tìm họ tên từ label (cả mẫu cũ & mẫu mới 2024/VNeID) hoặc dòng in hoa ngay sau số CCCD
+        def _is_label_noise(s: str) -> bool:
+            sl = s.lower()
+            return any(k in sl for k in (
+                "họ và tên", "full name", "chữ đệm", "ngày sinh", "date of birth",
+                "giới tính", "quốc tịch", "nơi cư trú", "quê quán", "đặc điểm",
+            ))
+
         full_name = None
         name_labels = ("họ và tên", "chữ đệm và tên", "tên khai sinh", "full name")
         for i, l in enumerate(lines):
             t_low = l["text"].lower()
             if any(lbl in t_low for lbl in name_labels):
-                # Trường hợp cùng dòng dạng "Họ và tên: NGUYỄN VĂN A"
                 if ":" in l["text"]:
-                    after_colon = l["text"].split(":", 1)[1].strip()
-                    if len(after_colon) >= 4 and not re.search(r"\d", after_colon):
+                    after_colon = l["text"].split(":", 1)[1].strip(" :-.")
+                    if len(after_colon) >= 4 and not re.search(r"\d", after_colon) and not _is_label_noise(after_colon):
                         full_name = after_colon
                         break
-                if i + 1 < len(lines):
-                    cand = lines[i + 1]["text"].strip()
-                    if len(cand) >= 4 and not re.search(r"\d", cand):
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    cand = lines[j]["text"].strip(" :-.")
+                    if len(cand) >= 4 and not re.search(r"\d", cand) and not _is_label_noise(cand):
                         full_name = cand
                         break
+                if full_name:
+                    break
         if not full_name and cccd_match:
             num_str = cccd_match.group(0)
             for i, l in enumerate(lines):
                 if num_str in l["text"] and i + 1 < len(lines):
-                    cand = lines[i + 1]["text"].strip()
-                    if len(cand) >= 4 and not re.search(r"\d", cand):
+                    cand = lines[i + 1]["text"].strip(" :-.")
+                    if len(cand) >= 4 and not re.search(r"\d", cand) and not _is_label_noise(cand):
                         full_name = cand
                         break
 
