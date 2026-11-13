@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     ROI_TEXT_ZONE: tuple[int, int, int, int] = (230, 560, 360, 940)
     ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 365, 760)
     ROI_FULL_NAME: tuple[int, int, int, int] = (325, 395, 360, 930)
+    ROI_MRZ: tuple[int, int, int, int] = (400, 620, 30, 970)          # Vùng 3 dòng MRZ mặt sau
+    ROI_BACK_QR: tuple[int, int, int, int] = (30, 320, 670, 980)      # Vùng QR mặt sau (Căn cước 2024)
 
     # 5. Cắt ảnh chân dung (lấy toàn bộ chân dung 3x4 gồm đầu + vai, không lẹm), InsightFace & Face Matching
     FACE_DET_SCORE_THRESHOLD: float = 0.65

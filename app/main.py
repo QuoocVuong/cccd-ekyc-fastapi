@@ -77,10 +77,16 @@ app.add_middleware(
 async def cccd_verification_exception_handler(
     request: Request, exc: CCCDVerificationException
 ) -> JSONResponse:
-    """Xử lý ngoại lệ chuẩn hóa cho toàn bộ lỗi trong pipeline eKYC (HTTP 422)."""
+    """Xử lý ngoại lệ chuẩn hóa doanh nghiệp cho toàn bộ lỗi trong pipeline eKYC (HTTP 422)."""
+    import uuid
+    from datetime import datetime, timezone
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
+            "request_id": str(uuid.uuid4()),
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "api_version": settings.APP_VERSION,
             "status": "error",
             "error_code": exc.detail.get("code", "VERIFICATION_FAILED"),
             "message": exc.detail.get("message", "Xác thực thẻ CCCD thất bại."),
@@ -133,20 +139,21 @@ async def health_check():
     response_model=CCCDVerificationResponse,
     status_code=status.HTTP_200_OK,
     tags=["eKYC Verification"],
-    summary="Xác thực và trích xuất dữ liệu thẻ CCCD Việt Nam",
+    summary="Xác thực và trích xuất dữ liệu thẻ CCCD Việt Nam (Mặt trước, Mặt sau, VNeID 1/2 mặt)",
 )
 async def verify_cccd(
     file: UploadFile = File(..., description="File ảnh thẻ CCCD định dạng JPEG, PNG, WEBP"),
-    strict_qr: bool = Query(True, description="True: bắt buộc QR (CCCD 2021); False: hỗ trợ cả Thẻ Căn cước 2024"),
-    allow_screen: bool = Query(True, description="True: tự động nhận diện ảnh chụp màn hình / VNeID khi không có viền thẻ vật lý"),
+    strict_qr: bool = Query(True, description="True: bắt buộc QR (CCCD 2021); False: hỗ trợ cả Thẻ Căn cước 2024 & VNeID"),
+    allow_screen: bool = Query(True, description="True: tự động nhận diện ảnh chụp màn hình / VNeID (1 mặt & 2 mặt)"),
+    expected_side: str = Query("AUTO", description="AUTO (tự phân biệt FRONT/BACK/BOTH), FRONT (chỉ mặt trước), BACK (chỉ mặt sau)"),
 ) -> CCCDVerificationResponse:
     """
-    Pipeline eKYC Fail-Fast xử lý dưới 60ms trên CPU:
-    1. Tiền xử lý, resize 640px, bắt 4 góc thẻ, validate hình học (tự cắt khung thẻ chụp xa hoặc nhận diện VNeID/màn hình).
+    Pipeline eKYC Fail-Fast chuẩn doanh nghiệp xử lý nhanh trên CPU:
+    1. Tiền xử lý, bắt 4 góc thẻ, kiểm tra hình học & góc cắt/che khuất.
     2. Nắn phẳng thẻ về chuẩn cố định 1000 x 630 (Perspective Warp).
-    3. Kiểm tra chất lượng: Chống mờ nét, sáng/tối, lóa flash, và quét vân màn hình Moiré.
-    4. Xử lý song song ROI: Đọc QR (WeChatQR/zxing) + Cắt ảnh 3x4 & Vector 512D (InsightFace), tự xoay 180°.
-    5. OCR tiếng Việt có dấu (AsterNet + RapidOCR) & Đối chiếu chéo chống sửa ảnh.
+    3. Kiểm tra chất lượng: Chống mờ nét, sáng/tối, lóa flash, che thẻ và vân màn hình Moiré.
+    4. Tự động phân biệt Mặt trước (QR + Chân dung 3x4 + Vector 512D) / Mặt sau (MRZ + QR sau + Đặc điểm nhận dạng) / VNeID 1-2 mặt.
+    5. OCR tiếng Việt có dấu (AsterNet + RapidOCR) & Đối chiếu chéo.
     """
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(
@@ -162,7 +169,12 @@ async def verify_cccd(
         )
 
     processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
-    return processor.process(image_bytes, strict_qr=strict_qr, allow_screen=allow_screen)
+    return processor.process(
+        image_bytes,
+        strict_qr=strict_qr,
+        allow_screen=allow_screen,
+        expected_side=expected_side.upper(),
+    )
 
 
 @app.post(

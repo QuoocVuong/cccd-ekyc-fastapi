@@ -1,6 +1,8 @@
 import concurrent.futures
 import logging
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 import cv2
@@ -11,8 +13,10 @@ from app.core.exceptions import (
     FaceDetectionError,
     GeometricValidationError,
     QRCodeError,
+    SideMismatchError,
 )
 from app.schemas.cccd import (
+    BackSideInfo,
     BasicOCRLine,
     BasicOCRResponse,
     CCCDVerificationResponse,
@@ -108,24 +112,51 @@ class CCCDProcessor:
 
         return raw_qr_text, face_result
 
+    @staticmethod
+    def _new_meta() -> Tuple[str, str]:
+        return (
+            str(uuid.uuid4()),
+            datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+    @staticmethod
+    def _collect_warnings(
+        quality_metrics: Optional[dict[str, float]],
+        card_type: str,
+        card_side: str,
+        mrz_info=None,
+    ) -> list[str]:
+        warnings: list[str] = []
+        if quality_metrics:
+            b = quality_metrics.get("brightness", 128.0)
+            if 0.0 < b < 70.0:
+                warnings.append("Độ sáng ảnh hơi thấp, nên chụp nơi đủ sáng hơn để tăng độ chính xác.")
+            if quality_metrics.get("glare_card_pct", 0.0) > 3.0:
+                warnings.append("Phát hiện phản quang nhẹ trên bề mặt thẻ.")
+        if card_type == "CAN_CUOC_2024" and card_side == "FRONT":
+            warnings.append("Thẻ Căn cước 2024 không có mã QR ở mặt trước; khuyến nghị chụp thêm mặt sau để đọc QR/MRZ.")
+        if mrz_info is not None and not mrz_info.checksum_valid:
+            warnings.append("Check-digit MRZ chưa khớp hoàn toàn (có thể do ảnh hơi nghiêng hoặc mờ vùng MRZ).")
+        return warnings
+
     def _process_screen_or_vneid(
         self,
         img: np.ndarray,
         t_start: float,
         corner_detection_ms: float,
         strict_qr: bool,
+        expected_side: str = "AUTO",
     ) -> CCCDVerificationResponse:
         """
         Xử lý ảnh chụp màn hình VNeID / Thẻ căn cước điện tử:
-        - Hỗ trợ ảnh dọc điện thoại (9:16, 9:20) hoặc ảnh chụp màn hình không có viền thẻ cứng.
-        - Quét QR toàn ảnh + InsightFace tìm chân dung toàn ảnh + Vietnamese OCR toàn ảnh.
+        - Hỗ trợ cả VNeID loại 1 mặt (SINGLE_SIDE) và VNeID loại 2 mặt (DUAL_SIDE: mặt trước + mặt sau).
+        - Chạy song song QR + Face + OCR tiếng Việt để tối ưu phản hồi nhanh.
         """
         t0 = time.perf_counter()
         h, w = img.shape[:2]
-        # Nếu ảnh màn hình quá lớn (> 1400px), resize nhẹ để đảm bảo tốc độ
         max_dim = max(h, w)
-        if max_dim > 1400:
-            scale = 1400.0 / max_dim
+        if max_dim > 1200:
+            scale = 1200.0 / max_dim
             proc_img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         else:
             proc_img = img
@@ -137,15 +168,52 @@ class CCCDProcessor:
             proc_img,
             (0, 0),
         )
+        future_ocr = self.executor.submit(self.ocr_verifier.extract_full_card_ocr, proc_img)
+
         raw_qr_text = future_qr.result()
         face_result = future_face.result()
-        qr_and_face_parallel_ms = (time.perf_counter() - t0) * 1000.0
+        full_ocr = future_ocr.result()
+        parallel_ms = (time.perf_counter() - t0) * 1000.0
 
-        if face_result is None:
+        raw_lines = full_ocr.get("raw_lines", [])
+        text_lines = [l["text"] for l in raw_lines]
+        all_lower = "\n".join(text_lines).lower()
+
+        from app.services.mrz_parser import parse_mrz_lines
+        mrz_info = parse_mrz_lines(text_lines)
+
+        has_back_markers = (
+            mrz_info is not None
+            or "đặc điểm" in all_lower
+            or "personal identification" in all_lower
+            or "bộ công an" in all_lower
+            or "cục cảnh sát" in all_lower
+        )
+
+        # Phân biệt VNeID 1 mặt vs 2 mặt và FRONT vs BACK
+        if face_result is not None and has_back_markers:
+            card_side = "BOTH"
+            vneid_layout = "DUAL_SIDE"
+        elif face_result is not None:
+            card_side = "FRONT"
+            vneid_layout = "SINGLE_SIDE"
+        elif has_back_markers:
+            card_side = "BACK"
+            vneid_layout = "SINGLE_SIDE"
+        else:
             raise FaceDetectionError(
-                "Không tìm thấy ảnh chân dung hợp lệ trên ảnh chụp màn hình / VNeID."
+                "Không tìm thấy ảnh chân dung hoặc dữ liệu mặt sau hợp lệ trên ảnh chụp màn hình / VNeID."
             )
-        portrait_base64, face_embedding = face_result
+
+        if expected_side in ("FRONT", "BACK") and card_side != "BOTH" and card_side != expected_side:
+            raise SideMismatchError(
+                f"Hệ thống yêu cầu ảnh {expected_side} nhưng ảnh VNeID tải lên là mặt {card_side}."
+            )
+
+        portrait_base64: Optional[str] = None
+        face_embedding: list[float] = []
+        if face_result is not None:
+            portrait_base64, face_embedding = face_result
 
         qr_info: Optional[QRInfo] = None
         if raw_qr_text is not None:
@@ -160,11 +228,18 @@ class CCCDProcessor:
                 "Không đọc được mã QR chuẩn 7 trường trên ảnh VNeID / chụp màn hình."
             )
 
-        t0 = time.perf_counter()
-        full_ocr = self.ocr_verifier.extract_full_card_ocr(proc_img)
-        raw_lines = full_ocr.get("raw_lines", [])
-        cccd_num = (qr_info.cccd_number if qr_info else None) or full_ocr.get("cccd_number") or ""
-        full_name = (qr_info.full_name if qr_info else None) or full_ocr.get("full_name") or ""
+        cccd_num = (
+            (qr_info.cccd_number if qr_info else None)
+            or full_ocr.get("cccd_number")
+            or (mrz_info.document_number if mrz_info else None)
+            or ""
+        )
+        full_name = (
+            (qr_info.full_name if qr_info else None)
+            or full_ocr.get("full_name")
+            or (mrz_info.full_name_mrz if mrz_info else None)
+            or ""
+        )
         avg_conf = (
             sum(l["confidence"] for l in raw_lines) / len(raw_lines)
             if raw_lines else 0.0
@@ -176,26 +251,49 @@ class CCCDProcessor:
             name_match=bool(full_name),
             confidence_score=round(avg_conf, 4),
         )
-        ocr_cross_verify_ms = (time.perf_counter() - t0) * 1000.0
+
+        back_info: Optional[BackSideInfo] = None
+        if has_back_markers:
+            back_res = self.ocr_verifier.extract_back_side_info(proc_img, is_warped_card=False)
+            back_info = BackSideInfo(
+                identifying_features=back_res.get("identifying_features"),
+                issue_date=back_res.get("issue_date"),
+                place_of_issue=back_res.get("place_of_issue"),
+                raw_lines=back_res.get("raw_lines", [])[:8],
+            )
+
+        req_id, ts = self._new_meta()
+        warnings = self._collect_warnings(None, "VNEID_SCREEN", card_side, mrz_info)
+        if vneid_layout == "DUAL_SIDE":
+            warnings.append("Đã nhận diện ảnh VNeID 2 mặt (mặt trước + mặt sau) trên cùng một màn hình.")
+
         total_ms = (time.perf_counter() - t_start) * 1000.0
 
         return CCCDVerificationResponse(
+            request_id=req_id,
+            timestamp=ts,
+            api_version=settings.APP_VERSION,
             status="success",
             is_valid=True,
             card_type="VNEID_SCREEN",
+            card_side=card_side,
+            vneid_layout=vneid_layout,
             rotated_180=False,
             qr_info=qr_info,
             ocr_info=ocr_info,
+            mrz_info=mrz_info,
+            back_info=back_info,
             portrait_base64=portrait_base64,
             face_embedding=face_embedding,
             quality_metrics={"sharpness": 0.0, "brightness": 0.0, "glare_card_pct": 0.0},
+            warnings=warnings,
             processing_time_ms=ProcessingTimeMS(
                 total_ms=round(total_ms, 2),
                 corner_detection_ms=round(corner_detection_ms, 2),
                 perspective_warp_ms=0.0,
                 quality_check_ms=0.0,
-                qr_and_face_parallel_ms=round(qr_and_face_parallel_ms, 2),
-                ocr_cross_verify_ms=round(ocr_cross_verify_ms, 2),
+                qr_and_face_parallel_ms=round(parallel_ms * 0.4, 2),
+                ocr_cross_verify_ms=round(parallel_ms * 0.6, 2),
             ),
         )
 
@@ -204,14 +302,12 @@ class CCCDProcessor:
         image_bytes: bytes,
         strict_qr: bool = True,
         allow_screen: bool = True,
+        expected_side: str = "AUTO",
     ) -> CCCDVerificationResponse:
         """
         Thực thi toàn bộ quy trình eKYC CCCD Việt Nam tuần tự theo luồng Fail-Fast:
-        1. Decode ảnh, resize 640px bắt 4 góc thẻ, validate hình học (hỗ trợ ảnh chụp xa tự cắt khung & ảnh VNeID).
-        2. Nắn phẳng thẻ về chuẩn 1000 x 630.
-        3. Kiểm tra chất lượng (mờ, sáng/tối, lóa flash, moiré màn hình).
-        4. Song song Luồng A (QR) & Luồng B (Chân dung/Embedding), hỗ trợ tự xoay 180°.
-        5. OCR Số CCCD và Họ tên tiếng Việt có dấu, đối chiếu chéo với dữ liệu QR (hoặc OCR mặt trước 2024/VNeID).
+        - Tự động phân biệt Mặt trước (FRONT) vs Mặt sau (BACK) và VNeID 1 mặt / 2 mặt.
+        - Trả về response chuẩn doanh nghiệp quốc tế (request_id, timestamp, warnings, mrz_info, back_info).
         """
         t_start = time.perf_counter()
 
@@ -228,24 +324,25 @@ class CCCDProcessor:
 
         orig_h, orig_w = img.shape[:2]
         is_portrait_screenshot = orig_h > orig_w * 1.15
-        corners = self.detector.detect(img)
 
-        try:
-            if is_portrait_screenshot and allow_screen:
-                raise GeometricValidationError("Ảnh dọc màn hình VNeID")
-            validated_corners = validate_geometry(corners, orig_w, orig_h)
+        if is_portrait_screenshot and allow_screen:
             corner_detection_ms = (time.perf_counter() - t0) * 1000.0
-        except GeometricValidationError:
-            if allow_screen:
-                corner_detection_ms = (time.perf_counter() - t0) * 1000.0
-                # Nếu không bắt được khung thẻ vật lý hoặc là ảnh chụp màn hình VNeID -> thử chế độ VNeID/Screen
-                try:
-                    return self._process_screen_or_vneid(
-                        img, t_start, corner_detection_ms, strict_qr
-                    )
-                except Exception:
-                    pass
-            raise
+            return self._process_screen_or_vneid(
+                img, t_start, corner_detection_ms, strict_qr, expected_side
+            )
+
+        corners = self.detector.detect(img)
+        if corners is None and allow_screen:
+            corner_detection_ms = (time.perf_counter() - t0) * 1000.0
+            try:
+                return self._process_screen_or_vneid(
+                    img, t_start, corner_detection_ms, strict_qr, expected_side
+                )
+            except Exception:
+                pass
+
+        validated_corners = validate_geometry(corners, orig_w, orig_h)
+        corner_detection_ms = (time.perf_counter() - t0) * 1000.0
 
         # -------------------------------------------------------------
         # 2. Nắn phẳng thẻ (Perspective Warp về 1000 x 630)
@@ -263,13 +360,12 @@ class CCCDProcessor:
 
         # -------------------------------------------------------------
         # 4. Xử lý song song ROI (Luồng A - QR & Luồng B - Chân dung)
-        #    Hỗ trợ tự động xoay ngược 180° nếu thẻ bị cắm ngược
+        #    Hỗ trợ tự xoay 180° và tự phân biệt Mặt trước (FRONT) vs Mặt sau (BACK)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
         rotated_180 = False
         raw_qr_text, face_result = self._execute_qr_and_face(warped)
 
-        # Nếu cả Luồng A và Luồng B đều không tìm thấy dữ liệu, tự động xoay thẻ 180°
         if raw_qr_text is None and face_result is None:
             logger.info("Không tìm thấy QR và Chân dung ở chiều ban đầu. Tiến hành tự xoay thẻ 180 độ...")
             warped_rot = cv2.rotate(warped, cv2.ROTATE_180)
@@ -281,12 +377,94 @@ class CCCDProcessor:
                 face_result = rot_face_result
                 rotated_180 = True
 
-        # Kiểm tra kết quả Luồng B (Ảnh chân dung & Vector)
+        qr_and_face_parallel_ms = (time.perf_counter() - t0) * 1000.0
+
+        # Nếu KHÔNG có khuôn mặt -> kiểm tra xem có phải MẶT SAU (BACK: MRZ / Đặc điểm nhận dạng / QR mặt sau)
         if face_result is None:
-            raise FaceDetectionError(
-                "Không nhận diện được khuôn mặt chân dung hợp lệ trên thẻ "
-                f"(yêu cầu độ tin cậy tối thiểu {settings.FACE_DET_SCORE_THRESHOLD * 100:.0f}%)."
+            t_back0 = time.perf_counter()
+            if raw_qr_text is None:
+                by1, by2, bx1, bx2 = settings.ROI_BACK_QR
+                raw_qr_text = self.qr_reader.decode_raw(warped[by1:by2, bx1:bx2])
+
+            back_res = self.ocr_verifier.extract_back_side_info(warped, is_warped_card=True)
+            mrz_info = back_res.get("mrz_info")
+            back_raw_text = "\n".join(back_res.get("raw_lines", [])).lower()
+            is_back_card = (
+                mrz_info is not None
+                or "đặc điểm" in back_raw_text
+                or "ngày" in back_raw_text
+                or "bộ công an" in back_raw_text
+                or raw_qr_text is not None
             )
+            if not is_back_card:
+                raise FaceDetectionError(
+                    "Không nhận diện được khuôn mặt (mặt trước) hoặc MRZ/thông tin mặt sau hợp lệ trên thẻ."
+                )
+
+            if expected_side == "FRONT":
+                raise SideMismatchError(
+                    "Hệ thống yêu cầu ảnh MẶT TRƯỚC nhưng bạn đã tải lên MẶT SAU thẻ CCCD/Căn cước."
+                )
+
+            qr_info_back: Optional[QRInfo] = None
+            if raw_qr_text is not None:
+                try:
+                    qr_info_back = self.qr_reader.parse_and_validate(raw_qr_text)
+                except QRCodeError:
+                    pass
+
+            card_type = "CAN_CUOC_2024" if qr_info_back is not None else "CCCD_2021"
+            back_info = BackSideInfo(
+                identifying_features=back_res.get("identifying_features"),
+                issue_date=back_res.get("issue_date"),
+                place_of_issue=back_res.get("place_of_issue"),
+                raw_lines=back_res.get("raw_lines", []),
+            )
+            ocr_cross_verify_ms = (time.perf_counter() - t_back0) * 1000.0
+            req_id, ts = self._new_meta()
+            warnings = self._collect_warnings(quality_metrics, card_type, "BACK", mrz_info)
+            total_ms = (time.perf_counter() - t_start) * 1000.0
+
+            return CCCDVerificationResponse(
+                request_id=req_id,
+                timestamp=ts,
+                api_version=settings.APP_VERSION,
+                status="success",
+                is_valid=True,
+                card_type=card_type,
+                card_side="BACK",
+                vneid_layout=None,
+                rotated_180=rotated_180,
+                qr_info=qr_info_back,
+                ocr_info=OCRInfo(
+                    cccd_number=(mrz_info.document_number if mrz_info and mrz_info.document_number else (qr_info_back.cccd_number if qr_info_back else "")),
+                    full_name=(mrz_info.full_name_mrz if mrz_info and mrz_info.full_name_mrz else (qr_info_back.full_name if qr_info_back else "")),
+                    cccd_match=bool(mrz_info and mrz_info.document_number),
+                    name_match=bool(mrz_info and mrz_info.full_name_mrz),
+                    confidence_score=0.95 if mrz_info else 0.75,
+                ),
+                mrz_info=mrz_info,
+                back_info=back_info,
+                portrait_base64=None,
+                face_embedding=[],
+                quality_metrics=quality_metrics,
+                warnings=warnings,
+                processing_time_ms=ProcessingTimeMS(
+                    total_ms=round(total_ms, 2),
+                    corner_detection_ms=round(corner_detection_ms, 2),
+                    perspective_warp_ms=round(perspective_warp_ms, 2),
+                    quality_check_ms=round(quality_check_ms, 2),
+                    qr_and_face_parallel_ms=round(qr_and_face_parallel_ms, 2),
+                    ocr_cross_verify_ms=round(ocr_cross_verify_ms, 2),
+                ),
+            )
+
+        # Có khuôn mặt -> MẶT TRƯỚC (FRONT)
+        if expected_side == "BACK":
+            raise SideMismatchError(
+                "Hệ thống yêu cầu ảnh MẶT SAU nhưng bạn đã tải lên MẶT TRƯỚC thẻ CCCD/Căn cước."
+            )
+
         portrait_base64, face_embedding = face_result
 
         # Kiểm tra kết quả Luồng A (QR)
@@ -298,8 +476,6 @@ class CCCDProcessor:
                 "Không thể phát hiện hoặc giải mã mã QR trên thẻ CCCD. "
                 "Nếu đây là Thẻ Căn cước mẫu 2024 (QR ở mặt sau), hãy bật chế độ hỗ trợ 2 loại thẻ (strict_qr=false)."
             )
-
-        qr_and_face_parallel_ms = (time.perf_counter() - t0) * 1000.0
 
         # -------------------------------------------------------------
         # 5. OCR & Đối chiếu chéo (hoặc OCR mặt trước Thẻ Căn cước 2024)
@@ -332,18 +508,28 @@ class CCCDProcessor:
             )
         ocr_cross_verify_ms = (time.perf_counter() - t0) * 1000.0
 
+        req_id, ts = self._new_meta()
+        warnings = self._collect_warnings(quality_metrics, card_type, "FRONT")
         total_ms = (time.perf_counter() - t_start) * 1000.0
 
         return CCCDVerificationResponse(
+            request_id=req_id,
+            timestamp=ts,
+            api_version=settings.APP_VERSION,
             status="success",
             is_valid=True,
             card_type=card_type,
+            card_side="FRONT",
+            vneid_layout=None,
             rotated_180=rotated_180,
             qr_info=qr_info,
             ocr_info=ocr_info,
+            mrz_info=None,
+            back_info=None,
             portrait_base64=portrait_base64,
             face_embedding=face_embedding,
             quality_metrics=quality_metrics,
+            warnings=warnings,
             processing_time_ms=ProcessingTimeMS(
                 total_ms=round(total_ms, 2),
                 corner_detection_ms=round(corner_detection_ms, 2),

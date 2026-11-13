@@ -32,17 +32,45 @@ class ProcessingTimeMS(BaseModel):
     ocr_cross_verify_ms: float = Field(..., description="OCR vùng số/họ tên và đối chiếu chéo")
 
 
+class MRZInfo(BaseModel):
+    """Dữ liệu giải mã từ 3 dòng MRZ chuẩn ICAO TD1 trên mặt sau CCCD / Căn cước."""
+    document_number: Optional[str] = Field(None, description="Số CCCD/ĐDCN trích xuất từ MRZ")
+    date_of_birth: Optional[str] = Field(None, description="Ngày sinh (DD/MM/YYYY)")
+    gender: Optional[str] = Field(None, description="Giới tính (Nam/Nữ)")
+    expiry_date: Optional[str] = Field(None, description="Ngày hết hạn (DD/MM/YYYY)")
+    nationality: Optional[str] = Field(None, description="Quốc tịch (VNM)")
+    full_name_mrz: Optional[str] = Field(None, description="Họ tên không dấu theo chuẩn MRZ")
+    raw_mrz: list[str] = Field(default_factory=list, description="3 dòng MRZ gốc đọc được")
+    checksum_valid: bool = Field(False, description="Kết quả kiểm tra check-digit ICAO")
+
+
+class BackSideInfo(BaseModel):
+    """Thông tin trích xuất từ mặt sau thẻ CCCD / Căn cước."""
+    identifying_features: Optional[str] = Field(None, description="Đặc điểm nhận dạng")
+    issue_date: Optional[str] = Field(None, description="Ngày cấp (DD/MM/YYYY)")
+    place_of_issue: Optional[str] = Field(None, description="Nơi cấp / Cơ quan cấp")
+    raw_lines: list[str] = Field(default_factory=list, description="Các dòng văn bản đọc được trên mặt sau")
+
+
 class CCCDVerificationResponse(BaseModel):
-    """Schema phản hồi kết quả xác thực eKYC CCCD thành công."""
+    """Schema phản hồi chuẩn doanh nghiệp quốc tế cho xác thực eKYC CCCD Việt Nam."""
+    request_id: str = Field(..., description="Mã định danh duy nhất (UUID v4) cho mỗi request")
+    timestamp: str = Field(..., description="Thời điểm xử lý chuẩn ISO-8601 UTC")
+    api_version: str = Field("1.0.0", description="Phiên bản API")
     status: str = Field("success", description="Trạng thái xử lý")
     is_valid: bool = Field(True, description="Thẻ hợp lệ và vượt qua toàn bộ kiểm tra")
-    card_type: str = Field("CCCD_2021", description="Loại thẻ: CCCD_2021 (có QR) hoặc CAN_CUOC_2024 (không QR mặt trước)")
+    card_type: str = Field("CCCD_2021", description="Loại thẻ: CCCD_2021, CAN_CUOC_2024, hoặc VNEID_SCREEN")
+    card_side: str = Field("FRONT", description="Mặt thẻ nhận diện được: FRONT (mặt trước), BACK (mặt sau), BOTH (VNeID 2 mặt)")
+    vneid_layout: Optional[str] = Field(None, description="Loại ảnh VNeID: SINGLE_SIDE (1 mặt) hoặc DUAL_SIDE (2 mặt)")
     rotated_180: bool = Field(False, description="Thẻ có bị xoay ngược 180 độ hay không")
     qr_info: Optional[QRInfo] = Field(None, description="Dữ liệu trích xuất từ QR (nếu có)")
-    ocr_info: OCRInfo = Field(..., description="Dữ liệu trích xuất và đối chiếu OCR")
-    portrait_base64: str = Field(..., description="Ảnh chân dung đã cắt chuẩn tỷ lệ 3x4 (Base64 JPEG)")
-    face_embedding: list[float] = Field(..., description="Vector đặc trưng khuôn mặt 512 chiều")
+    ocr_info: Optional[OCRInfo] = Field(None, description="Dữ liệu trích xuất và đối chiếu OCR")
+    mrz_info: Optional[MRZInfo] = Field(None, description="Dữ liệu trích xuất từ MRZ mặt sau (nếu có)")
+    back_info: Optional[BackSideInfo] = Field(None, description="Thông tin mặt sau thẻ (nếu có)")
+    portrait_base64: Optional[str] = Field(None, description="Ảnh chân dung 3x4 (Base64 JPEG, có ở mặt trước/VNeID)")
+    face_embedding: list[float] = Field(default_factory=list, description="Vector khuôn mặt 512 chiều (có ở mặt trước/VNeID)")
     quality_metrics: Optional[dict[str, float]] = Field(None, description="Các chỉ số đo độ nét, độ sáng, độ lóa")
+    warnings: list[str] = Field(default_factory=list, description="Danh sách cảnh báo cần lưu ý (nếu có)")
     processing_time_ms: ProcessingTimeMS = Field(..., description="Đo lường hiệu năng từng công đoạn")
 
 

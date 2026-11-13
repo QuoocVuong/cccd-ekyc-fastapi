@@ -44,3 +44,11 @@ class CrossVerificationError(CCCDVerificationException):
 
     def __init__(self, detail: str):
         super().__init__(detail=detail, code="CROSS_VERIFICATION_MISMATCH")
+
+
+class SideMismatchError(CCCDVerificationException):
+    """Lỗi sai mặt thẻ (ví dụ: yêu cầu mặt trước nhưng tải lên mặt sau hoặc ngược lại)."""
+
+    def __init__(self, detail: str):
+        super().__init__(detail=detail, code="SIDE_MISMATCH")
+

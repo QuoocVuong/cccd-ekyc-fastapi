@@ -380,3 +380,65 @@ class OCRVerifier:
             "expiry_date": expiry_date,
             "raw_lines": [{"text": l["text"], "confidence": l["confidence"]} for l in lines],
         }
+
+    def extract_back_side_info(self, image_bgr: np.ndarray, is_warped_card: bool = True) -> dict:
+        """
+        Trích xuất thông tin mặt sau CCCD / Căn cước 2024:
+        - Đọc vùng MRZ 3 dòng (y: 400..620) nếu là thẻ nắn phẳng, hoặc toàn ảnh nếu là VNeID.
+        - Bóc tách Đặc điểm nhận dạng, Ngày cấp, Nơi cấp.
+        """
+        from app.services.mrz_parser import parse_mrz_lines
+
+        if is_warped_card:
+            my1, my2, mx1, mx2 = settings.ROI_MRZ
+            mrz_crop = image_bgr[my1:my2, mx1:mx2]
+            mrz_ocr = self.extract_full_card_ocr(mrz_crop)
+            mrz_raw = [l["text"] for l in mrz_ocr.get("raw_lines", [])]
+            mrz_info = parse_mrz_lines(mrz_raw)
+
+            # Đọc phần trên mặt sau (Đặc điểm nhận dạng, Ngày cấp)
+            top_crop = image_bgr[20:my1, 20:670]
+            top_ocr = self.extract_full_card_ocr(top_crop)
+            top_lines = [l["text"] for l in top_ocr.get("raw_lines", [])]
+        else:
+            full_ocr = self.extract_full_card_ocr(image_bgr)
+            all_lines = [l["text"] for l in full_ocr.get("raw_lines", [])]
+            mrz_info = parse_mrz_lines(all_lines)
+            top_lines = all_lines
+
+        identifying_features = None
+        issue_date = None
+        place_of_issue = None
+        for i, txt in enumerate(top_lines):
+            t_low = txt.lower()
+            if "đặc điểm" in t_low or "personal identification" in t_low:
+                if ":" in txt and txt.split(":", 1)[1].strip():
+                    identifying_features = txt.split(":", 1)[1].strip()
+                elif i + 1 < len(top_lines):
+                    identifying_features = top_lines[i + 1].strip()
+            if "ngày" in t_low and "cấp" in t_low or "date of issue" in t_low:
+                m_date = re.search(r"\b\d{2}/\d{2}/\d{4}\b", txt)
+                if m_date:
+                    issue_date = m_date.group(0)
+                elif i + 1 < len(top_lines):
+                    m_next = re.search(r"\b\d{2}/\d{2}/\d{4}\b", top_lines[i + 1])
+                    if m_next:
+                        issue_date = m_next.group(0)
+            if "bộ công an" in t_low or "cục cảnh sát" in t_low:
+                place_of_issue = txt.strip()
+
+        if issue_date is None:
+            for txt in top_lines:
+                m_date = re.search(r"\b\d{2}/\d{2}/\d{4}\b", txt)
+                if m_date:
+                    issue_date = m_date.group(0)
+                    break
+
+        return {
+            "mrz_info": mrz_info,
+            "identifying_features": identifying_features,
+            "issue_date": issue_date,
+            "place_of_issue": place_of_issue,
+            "raw_lines": top_lines,
+        }
+

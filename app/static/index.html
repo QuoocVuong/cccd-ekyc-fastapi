@@ -538,11 +538,20 @@
         <video id="webcamVideo" autoplay playsinline style="display:none;"></video>
       </div>
 
+      <div style="margin-top:12px; display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px;">
+        <label for="expectedSideSelect" style="color:var(--text-muted);">Chế độ kiểm tra mặt thẻ:</label>
+        <select id="expectedSideSelect" style="background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-size:12px;">
+          <option value="AUTO" selected>Tự động phân biệt (Trước / Sau / VNeID 1-2 mặt)</option>
+          <option value="FRONT">Bắt buộc Mặt trước (FRONT)</option>
+          <option value="BACK">Bắt buộc Mặt sau (BACK)</option>
+        </select>
+      </div>
+
       <div class="btn-row">
         <button type="button" class="btn-primary" id="verifyBtn" disabled>
           Xác thực ngay
         </button>
-        <button type="button" class="btn-secondary" id="ocrBasicBtn" disabled title="Đọc toàn bộ text trên mặt thẻ bằng RapidOCR">
+        <button type="button" class="btn-secondary" id="ocrBasicBtn" disabled title="Đọc toàn bộ text trên mặt thẻ bằng AsterNet + RapidOCR">
           📝 OCR Cơ Bản
         </button>
         <button type="button" class="btn-secondary" id="webcamBtn">
@@ -558,24 +567,28 @@
         <input type="file" id="selfieInput" accept="image/*" hidden />
         <div class="dropzone" id="selfieDropzone" style="padding:16px 12px;">
           <div class="dropzone-text" style="font-size:13px;">🤳 Chọn ảnh Selfie hoặc kéo thả vào đây</div>
-          <div class="dropzone-sub">Đối chiếu khuôn mặt với ảnh chân dung trên CCCD</div>
+          <div class="dropzone-sub">Hoặc bấm "Cam Selfie" để chụp trực tiếp từ Camera</div>
         </div>
         <div class="preview-box" id="selfiePreviewBox">
           <img id="selfiePreviewImg" alt="Ảnh Selfie xem trước" style="max-height:180px;" />
+          <video id="selfieWebcamVideo" autoplay playsinline style="display:none; max-height:200px; width:100%; border-radius:8px;"></video>
         </div>
         <div class="btn-row">
           <button type="button" class="btn-primary" id="faceMatchBtn" disabled style="background:#10b981;">
             So khớp khuôn mặt
           </button>
+          <button type="button" class="btn-secondary" id="selfieWebcamBtn">
+            📸 Cam Selfie
+          </button>
         </div>
       </div>
 
       <div class="tips">
-        <strong>Lưu ý để đạt tỷ lệ thành công & tốc độ cao:</strong>
+        <strong>Lưu ý để đạt tỷ lệ thành công &amp; tốc độ cao:</strong>
         <ul>
-          <li>Đặt thẻ trên nền tối/tương phản, thấy đủ 4 góc (cách mép &ge; 8px).</li>
-          <li>Không bật flash gây lóa vùng mã QR hoặc vùng ảnh chân dung.</li>
-          <li>Không chụp lại qua màn hình điện tử (hệ thống có bộ lọc Moiré FFT).</li>
+          <li>Đặt thẻ trên nền tối/tương phản, thấy đủ 4 góc (không lẹm/che góc).</li>
+          <li>Không bật flash gây lóa vùng mã QR, vùng chân dung hoặc vùng chữ.</li>
+          <li>Hỗ trợ cả Mặt trước, Mặt sau (MRZ + QR), Căn cước 2024 &amp; VNeID (1 mặt / 2 mặt).</li>
         </ul>
       </div>
     </section>
@@ -591,7 +604,7 @@
 
       <div class="empty-state" id="emptyState">
         <h3>Chưa có dữ liệu kiểm tra</h3>
-        <p>Tải lên ảnh mặt trước CCCD gắn chip hoặc Thẻ Căn cước để chạy toàn bộ pipeline eKYC, OCR cơ bản hoặc Face Matching.</p>
+        <p>Tải lên ảnh mặt trước/mặt sau CCCD, Thẻ Căn cước 2024 hoặc ảnh chụp màn hình VNeID (1 mặt / 2 mặt).</p>
       </div>
 
       <div id="resultContent" style="display:none;"></div>
@@ -604,6 +617,7 @@
     const previewBox = document.getElementById("previewBox");
     const previewImg = document.getElementById("previewImg");
     const webcamVideo = document.getElementById("webcamVideo");
+    const expectedSideSelect = document.getElementById("expectedSideSelect");
     const verifyBtn = document.getElementById("verifyBtn");
     const ocrBasicBtn = document.getElementById("ocrBasicBtn");
     const webcamBtn = document.getElementById("webcamBtn");
@@ -611,6 +625,8 @@
     const selfieDropzone = document.getElementById("selfieDropzone");
     const selfiePreviewBox = document.getElementById("selfiePreviewBox");
     const selfiePreviewImg = document.getElementById("selfiePreviewImg");
+    const selfieWebcamVideo = document.getElementById("selfieWebcamVideo");
+    const selfieWebcamBtn = document.getElementById("selfieWebcamBtn");
     const faceMatchBtn = document.getElementById("faceMatchBtn");
     const faceMatchResult = document.getElementById("faceMatchResult");
     const healthBar = document.getElementById("healthBar");
@@ -621,6 +637,7 @@
     let selectedFile = null;
     let selectedSelfie = null;
     let webcamStream = null;
+    let selfieWebcamStream = null;
 
     // 1. Kiểm tra /health khi tải trang
     async function loadHealth() {
@@ -633,6 +650,7 @@
           <span class="pill ${m.wechat_qr ? 'ok' : 'err'}"><span class="dot"></span> WeChatQR</span>
           <span class="pill ${m.insightface ? 'ok' : 'err'}"><span class="dot"></span> InsightFace</span>
           <span class="pill ${m.rapid_ocr ? 'ok' : 'err'}"><span class="dot"></span> RapidOCR</span>
+          <span class="pill ${m.vietnamese_ocr ? 'ok' : 'err'}"><span class="dot"></span> Vi-OCR</span>
         `;
       } catch (err) {
         healthBar.innerHTML = `<span class="pill err"><span class="dot"></span> Mất kết nối API</span>`;
@@ -818,10 +836,45 @@
       }
     });
 
-    // 3. Hỗ trợ chụp trực tiếp từ Webcam
+    // 2b. Chụp Selfie trực tiếp từ Camera để so khớp 1:1
+    selfieWebcamBtn.addEventListener("click", async () => {
+      if (selfieWebcamStream) {
+        const canvas = document.createElement("canvas");
+        canvas.width = selfieWebcamVideo.videoWidth;
+        canvas.height = selfieWebcamVideo.videoHeight;
+        canvas.getContext("2d").drawImage(selfieWebcamVideo, 0, 0);
+        canvas.toBlob((blob) => {
+          const captured = new File([blob], "selfie_cam.jpg", { type: "image/jpeg" });
+          selfieWebcamStream.getTracks().forEach((t) => t.stop());
+          selfieWebcamStream = null;
+          selfieWebcamVideo.style.display = "none";
+          selfiePreviewImg.style.display = "block";
+          selfieWebcamBtn.textContent = "📸 Cam Selfie";
+          handleSelfie(captured);
+          if (window.__lastEmbedding || selectedFile) {
+            faceMatchBtn.click();
+          }
+        }, "image/jpeg", 0.95);
+        return;
+      }
+
+      try {
+        selfieWebcamStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 720 } }
+        });
+        selfieWebcamVideo.srcObject = selfieWebcamStream;
+        selfieWebcamVideo.style.display = "block";
+        selfiePreviewImg.style.display = "none";
+        selfiePreviewBox.style.display = "block";
+        selfieWebcamBtn.textContent = "🤳 Chụp & So khớp";
+      } catch (err) {
+        alert("Không thể mở Camera Selfie: " + err.message);
+      }
+    });
+
+    // 3. Hỗ trợ chụp trực tiếp từ Webcam (Thẻ CCCD)
     webcamBtn.addEventListener("click", async () => {
       if (webcamStream) {
-        // Chụp khung hình hiện tại từ webcam
         const canvas = document.createElement("canvas");
         canvas.width = webcamVideo.videoWidth;
         canvas.height = webcamVideo.videoHeight;
@@ -862,10 +915,11 @@
 
       const formData = new FormData();
       formData.append("file", selectedFile);
+      const expectedSide = expectedSideSelect ? expectedSideSelect.value : "AUTO";
 
       const t0 = performance.now();
       try {
-        const res = await fetch("/api/v1/cccd/verify?strict_qr=false&allow_screen=true", {
+        const res = await fetch(`/api/v1/cccd/verify?strict_qr=false&allow_screen=true&expected_side=${encodeURIComponent(expectedSide)}`, {
           method: "POST",
           body: formData,
         });
@@ -897,7 +951,7 @@
           <div class="latency-badge medium">${clientMs} ms</div>
         </div>
         <div class="section-box">
-          <h4>Chi tiết JSON phản hồi</h4>
+          <h4>Chi tiết JSON phản hồi chuẩn Doanh nghiệp</h4>
           <div class="json-box">${escapeHtml(JSON.stringify(data, null, 2))}</div>
         </div>
       `;
@@ -910,25 +964,46 @@
       }
 
       const qr = data.qr_info;
-      const ocr = data.ocr_info;
+      const ocr = data.ocr_info || { cccd_number: "", full_name: "", cccd_match: false, name_match: false, confidence_score: 0 };
+      const mrz = data.mrz_info;
+      const back = data.back_info;
       const qm = data.quality_metrics || {};
       const t = data.processing_time_ms;
       const totalClass = t.total_ms <= 60 ? "fast" : "medium";
-      const displayNumber = qr ? qr.cccd_number : ocr.cccd_number;
-      const displayName = qr ? qr.full_name : ocr.full_name;
+      const displayNumber = (qr && qr.cccd_number) || ocr.cccd_number || (mrz && mrz.document_number) || "";
+      const displayName = (qr && qr.full_name) || ocr.full_name || (mrz && mrz.full_name_mrz) || "";
+
+      const sideLabels = {
+        "FRONT": "Mặt trước (FRONT)",
+        "BACK": "Mặt sau (BACK)",
+        "BOTH": "VNeID 2 mặt (FRONT + BACK)",
+      };
+      const sideLabel = sideLabels[data.card_side] || data.card_side || "FRONT";
+      const vneidTag = data.vneid_layout ? ` &bull; ${data.vneid_layout}` : "";
+
       const cardLabels = {
         "VNEID_SCREEN": "Ảnh chụp màn hình / VNeID",
-        "CAN_CUOC_2024": "Thẻ Căn cước 2024 (Không QR mặt trước)",
-        "CCCD_2021": "CCCD gắn chip 2021 (Có QR)",
+        "CAN_CUOC_2024": "Thẻ Căn cước 2024",
+        "CCCD_2021": "CCCD gắn chip 2021",
       };
-      const cardLabel = cardLabels[data.card_type] || "CCCD gắn chip 2021 (Có QR)";
+      const cardLabel = `${cardLabels[data.card_type] || data.card_type} • ${sideLabel}${vneidTag}`;
+
+      const warningsList = data.warnings || [];
+      const warningsHtml = warningsList.length > 0 ? `
+        <div style="background:rgba(245,158,11,0.14); border:1px solid rgba(245,158,11,0.45); border-radius:10px; padding:12px 14px; margin-bottom:16px; color:#fde68a; font-size:13px;">
+          <strong>⚠️ Cảnh báo hệ thống:</strong>
+          <ul style="margin:6px 0 0 18px;">
+            ${warningsList.map(w => `<li>${escapeHtml(w)}</li>`).join("")}
+          </ul>
+        </div>
+      ` : "";
 
       const steps = [
         { label: "1. Bắt 4 góc & Hình học", ms: t.corner_detection_ms },
         { label: "2. Nắn phẳng (1000x630)", ms: t.perspective_warp_ms },
         { label: "3. Chất lượng & Anti-Spoof", ms: t.quality_check_ms },
         { label: "4. Song song QR + InsightFace", ms: t.qr_and_face_parallel_ms },
-        { label: "5. OCR & Đối chiếu chéo", ms: t.ocr_cross_verify_ms },
+        { label: "5. OCR / MRZ & Đối chiếu", ms: t.ocr_cross_verify_ms },
       ];
 
       const barsHtml = steps.map((s) => {
@@ -942,13 +1017,13 @@
         `;
       }).join("");
 
-      const embPreview = data.face_embedding.slice(0, 8).map((v) => v.toFixed(4)).join(", ");
+      const hasFace = data.face_embedding && data.face_embedding.length > 0 && data.portrait_base64;
+      const embPreview = hasFace ? data.face_embedding.slice(0, 8).map((v) => v.toFixed(4)).join(", ") : "N/A (Mặt sau)";
 
-      // Bản rút gọn để hiển thị JSON dễ đọc
       const jsonDisplay = {
         ...data,
-        portrait_base64: data.portrait_base64.slice(0, 48) + "... (truncated)",
-        face_embedding: `[512 floats: ${embPreview}, ...]`,
+        portrait_base64: data.portrait_base64 ? data.portrait_base64.slice(0, 48) + "... (truncated)" : null,
+        face_embedding: hasFace ? `[512 floats: ${embPreview}, ...]` : [],
       };
 
       resultContent.innerHTML = `
@@ -956,29 +1031,34 @@
           <div>
             <div class="status-title">✅ Xác thực hợp lệ &bull; ${escapeHtml(cardLabel)}</div>
             <div class="status-msg">
+              Request ID: <code>${escapeHtml((data.request_id || "").slice(0, 8))}</code> &bull;
               Độ nét: <strong>${qm.sharpness ?? '-'}</strong> &bull;
               Độ sáng: <strong>${qm.brightness ?? '-'}</strong> &bull;
-              Lóa thẻ/QR/Mặt: <strong>${qm.glare_card_pct ?? 0}% / ${qm.glare_qr_pct ?? 0}% / ${qm.glare_portrait_pct ?? 0}%</strong> &bull;
+              Lóa: <strong>${qm.glare_card_pct ?? 0}%</strong> &bull;
               RTT: ${clientMs} ms
             </div>
           </div>
           <div class="latency-badge ${totalClass}">${t.total_ms.toFixed(1)} ms</div>
         </div>
 
-        <div class="grid-2">
+        ${warningsHtml}
+
+        <div class="grid-2" style="${hasFace ? '' : 'grid-template-columns:1fr;'}">
+          ${hasFace ? `
           <div class="portrait-wrap">
             <img src="${data.portrait_base64}" alt="Ảnh chân dung 3x4" />
             <div class="portrait-caption">Chân dung 3x4 &bull; 512D Vector</div>
           </div>
+          ` : ''}
 
           <div>
             <table class="info-table">
               <tr>
-                <th>Số CCCD</th>
+                <th>Số CCCD / ĐDCN</th>
                 <td>
                   ${escapeHtml(displayNumber || "Không rõ")}
                   <span class="match-tag ${ocr.cccd_match ? 'ok' : 'fail'}">
-                    ${qr ? (ocr.cccd_match ? '✓ Khớp OCR 100%' : '✗ Sai lệch') : 'OCR'}
+                    ${qr ? (ocr.cccd_match ? '✓ Khớp OCR' : '✗ Sai lệch') : (mrz ? 'MRZ' : 'OCR')}
                   </span>
                 </td>
               </tr>
@@ -987,25 +1067,24 @@
                 <td>
                   ${escapeHtml(displayName || "Không rõ")}
                   <span class="match-tag ${ocr.name_match ? 'ok' : 'fail'}">
-                    ${qr ? (ocr.name_match ? '✓ Khớp OCR' : '✗ Sai lệch') : 'OCR'}
+                    ${qr ? (ocr.name_match ? '✓ Khớp OCR' : '✗ Sai lệch') : (mrz ? 'MRZ' : 'OCR')}
                   </span>
                 </td>
               </tr>
-              <tr>
-                <th>OCR đọc được</th>
-                <td style="color:var(--text-muted); font-weight:500;">
-                  ${escapeHtml(ocr.cccd_number)} &bull; ${escapeHtml(ocr.full_name)} (Conf: ${(ocr.confidence_score * 100).toFixed(1)}%)
-                </td>
-              </tr>
               ${qr ? `
-              <tr><th>Ngày sinh</th><td>${formatDate(qr.dob)}</td></tr>
-              <tr><th>Giới tính</th><td>${escapeHtml(qr.gender)}</td></tr>
-              <tr><th>CMND cũ</th><td>${escapeHtml(qr.old_cmnd || "Không có")}</td></tr>
+              <tr><th>Ngày sinh (QR)</th><td>${formatDate(qr.dob)}</td></tr>
+              <tr><th>Giới tính (QR)</th><td>${escapeHtml(qr.gender)}</td></tr>
               <tr><th>Nơi thường trú</th><td>${escapeHtml(qr.address)}</td></tr>
-              <tr><th>Ngày cấp</th><td>${formatDate(qr.issue_date)}</td></tr>
-              ` : `
-              <tr><th>Ghi chú</th><td style="color:var(--text-muted);">Thẻ Căn cước 2024 (không có QR mặt trước) — đã trích xuất chân dung 3x4 &amp; OCR</td></tr>
-              `}
+              <tr><th>Ngày cấp (QR)</th><td>${formatDate(qr.issue_date)}</td></tr>
+              ` : ''}
+              ${mrz ? `
+              <tr><th>MRZ Ngày sinh / Hết hạn</th><td>${escapeHtml(mrz.date_of_birth || '-')} &rarr; ${escapeHtml(mrz.expiry_date || '-')} <span class="match-tag ${mrz.checksum_valid ? 'ok' : 'fail'}">${mrz.checksum_valid ? '✓ Checksum OK' : '⚠ Checksum'}</span></td></tr>
+              <tr><th>MRZ Giới tính / Quốc tịch</th><td>${escapeHtml(mrz.gender || '-')} &bull; ${escapeHtml(mrz.nationality || 'VNM')}</td></tr>
+              ` : ''}
+              ${back ? `
+              <tr><th>Đặc điểm nhận dạng</th><td>${escapeHtml(back.identifying_features || "Không rõ")}</td></tr>
+              <tr><th>Ngày cấp / Nơi cấp</th><td>${escapeHtml(back.issue_date || "-")} &bull; ${escapeHtml(back.place_of_issue || "-")}</td></tr>
+              ` : ''}
             </table>
           </div>
         </div>
@@ -1020,14 +1099,17 @@
 
         <div class="section-box">
           <h4>
-            <span>Face Embedding (512 chiều) &amp; JSON Response</span>
-            <button type="button" class="btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="copyEmbedding()">Copy 512D Vector</button>
+            <span>Enterprise JSON Response</span>
+            ${hasFace ? `<button type="button" class="btn-secondary" style="padding:4px 10px; font-size:11px;" onclick="copyEmbedding()">Copy 512D Vector</button>` : ''}
           </h4>
           <div class="json-box">${escapeHtml(JSON.stringify(jsonDisplay, null, 2))}</div>
         </div>
       `;
 
-      window.__lastEmbedding = data.face_embedding;
+      window.__lastEmbedding = hasFace ? data.face_embedding : null;
+      if (selectedSelfie && hasFace) {
+        faceMatchBtn.disabled = false;
+      }
     }
 
     function copyEmbedding() {

@@ -427,3 +427,103 @@ def test_vneid_2024_without_qr_screen():
     assert res["portrait_base64"].startswith("data:image/jpeg;base64,")
 
 
+def test_back_side_cccd_mrz_and_side_mismatch():
+    """Kiểm tra tự động nhận diện MẶT SAU (MRZ + Đặc điểm) và bắt lỗi SIDE_MISMATCH."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    card = np.full((630, 1000, 3), (215, 228, 224), dtype=np.uint8)
+    pil_card = Image.fromarray(cv2.cvtColor(card, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_card)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
+    try:
+        font_mrz = ImageFont.truetype(font_path, 30)
+        font_txt = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+    except Exception:
+        font_mrz = ImageFont.load_default()
+        font_txt = ImageFont.load_default()
+
+    draw.text((50, 80), "Đặc điểm nhận dạng: Nốt ruồi", fill=(20, 20, 20), font=font_txt)
+    draw.text((50, 140), "Ngày cấp: 20/11/2021", fill=(20, 20, 20), font=font_txt)
+    draw.text((50, 190), "BỘ CÔNG AN", fill=(20, 20, 20), font=font_txt)
+
+    # 3 dòng MRZ chuẩn TD1
+    draw.text((50, 440), "IDVNM0990123456001099012345<<9", fill=(10, 10, 10), font=font_mrz)
+    draw.text((50, 490), "9508152M3108156VNM<<<<<<<<<<<0", fill=(10, 10, 10), font=font_mrz)
+    draw.text((50, 540), "LANH<<QUOC<VUONG<<<<<<<<<<<<<<", fill=(10, 10, 10), font=font_mrz)
+
+    card_bgr = cv2.cvtColor(np.array(pil_card), cv2.COLOR_RGB2BGR)
+    full_img = np.full((960, 1280, 3), 40, dtype=np.uint8)
+    full_img[165 : 165 + 630, 140 : 140 + 1000] = card_bgr
+    _, buf = cv2.imencode(".jpg", full_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    # 1. Auto-detect BACK
+    resp = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&expected_side=AUTO",
+        files={"file": ("back_cccd.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert resp.status_code == 200
+    res = resp.json()
+    assert res["card_side"] == "BACK"
+    assert res["request_id"]
+    assert res["timestamp"]
+    assert res["mrz_info"] is not None
+    assert res["mrz_info"]["document_number"] == "001099012345"
+    assert res["back_info"] is not None
+
+    # 2. Expected FRONT nhưng gửi BACK -> SIDE_MISMATCH
+    mismatch_resp = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&expected_side=FRONT",
+        files={"file": ("back_cccd.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert mismatch_resp.status_code == 422
+    assert mismatch_resp.json()["error_code"] == "SIDE_MISMATCH"
+
+
+def test_vneid_dual_side_screen():
+    """Kiểm tra nhận diện ảnh chụp màn hình VNeID loại 2 mặt (Mặt trước + Mặt sau trên cùng ảnh)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    screen = np.full((1500, 720, 3), (240, 244, 248), dtype=np.uint8)
+    astronaut = data.astronaut()
+    face = cv2.resize(astronaut[30:260, 160:340], (200, 260))
+    screen[100 : 100 + 260, 40 : 40 + 200] = cv2.cvtColor(face, cv2.COLOR_RGB2BGR)
+
+    pil_img = Image.fromarray(cv2.cvtColor(screen, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    try:
+        font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+        font_md = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        font_mrz = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 24)
+    except Exception:
+        font_lg = font_md = font_mrz = ImageFont.load_default()
+
+    # Nửa trên: Mặt trước VNeID
+    draw.text((260, 140), "Số định danh cá nhân:", fill=(70, 70, 70), font=font_md)
+    draw.text((260, 180), "002099012345", fill=(15, 15, 15), font=font_lg)
+    draw.text((40, 400), "Họ và tên: LÃNH QUỐC VƯƠNG", fill=(15, 15, 15), font=font_lg)
+
+    # Nửa dưới: Mặt sau VNeID
+    draw.text((40, 760), "Đặc điểm nhận dạng: Sẹo chấm", fill=(30, 30, 30), font=font_md)
+    draw.text((40, 810), "Ngày cấp: 20/11/2021 - BỘ CÔNG AN", fill=(30, 30, 30), font=font_md)
+    draw.text((40, 920), "IDVNM0990123456002099012345<<9", fill=(10, 10, 10), font=font_mrz)
+    draw.text((40, 960), "9508152M3108156VNM<<<<<<<<<<<0", fill=(10, 10, 10), font=font_mrz)
+    draw.text((40, 1000), "LANH<<QUOC<VUONG<<<<<<<<<<<<<<", fill=(10, 10, 10), font=font_mrz)
+
+    screen_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode(".jpg", screen_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    resp = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&allow_screen=true",
+        files={"file": ("vneid_dual.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert resp.status_code == 200
+    res = resp.json()
+    assert res["card_type"] == "VNEID_SCREEN"
+    assert res["card_side"] == "BOTH"
+    assert res["vneid_layout"] == "DUAL_SIDE"
+    assert res["mrz_info"] is not None
+    assert res["back_info"] is not None
+    assert res["portrait_base64"].startswith("data:image/jpeg;base64,")
+
+
+
