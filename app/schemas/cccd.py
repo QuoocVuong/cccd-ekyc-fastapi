@@ -74,6 +74,7 @@ class BasicOCRResponse(BaseModel):
     """Kết quả OCR cơ bản toàn bộ mặt thẻ CCCD đã nắn phẳng."""
     status: str = "success"
     cccd_number: Optional[str] = None
+    full_name: Optional[str] = None
     dob: Optional[str] = None
     gender: Optional[str] = None
     expiry_date: Optional[str] = None

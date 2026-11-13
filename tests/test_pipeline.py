@@ -204,7 +204,7 @@ def test_fail_fast_edge_proximity():
     img_bytes = create_synthetic_cccd_image(near_edge=True)
     files = {"file": ("near_edge_cccd.jpg", io.BytesIO(img_bytes), "image/jpeg")}
 
-    response = client.post("/api/v1/cccd/verify", files=files)
+    response = client.post("/api/v1/cccd/verify?allow_screen=false", files=files)
     assert response.status_code == 422
     data = response.json()
     assert data["status"] == "error"
@@ -217,7 +217,7 @@ def test_fail_fast_area_too_small():
     img_bytes = create_synthetic_cccd_image(too_small=True)
     files = {"file": ("small_cccd.jpg", io.BytesIO(img_bytes), "image/jpeg")}
 
-    response = client.post("/api/v1/cccd/verify", files=files)
+    response = client.post("/api/v1/cccd/verify?allow_screen=false", files=files)
     assert response.status_code == 422
     data = response.json()
     assert data["status"] == "error"
@@ -300,3 +300,66 @@ def test_face_match_and_ocr_basic():
     assert match_data["status"] == "success"
     assert match_data["is_match"] is True
     assert match_data["similarity"] >= 0.70
+
+
+def test_vneid_screenshot_and_vietnamese_diacritics():
+    """Kiểm tra nhận diện ảnh chụp màn hình VNeID (dọc) và OCR tiếng Việt có dấu."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    # Tạo ảnh màn hình điện thoại dọc 720x1280
+    screen = np.full((1280, 720, 3), (242, 245, 248), dtype=np.uint8)
+
+    # Vẽ QR code góc trên phải
+    qr_data = "002099012345||LÃNH QUỐC VƯƠNG|15081995|Nam|Cao Lộc, Lạng Sơn|20112021"
+    qr = qrcode.QRCode(box_size=4, border=1)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    qr_matrix = np.array(qr.get_matrix(), dtype=bool)
+    qrh, qrw = qr_matrix.shape
+    scale = 4
+    qr_img = np.full((qrh * scale, qrw * scale, 3), 245, dtype=np.uint8)
+    for r in range(qrh):
+        for c in range(qrw):
+            if qr_matrix[r, c]:
+                qr_img[r * scale : (r + 1) * scale, c * scale : (c + 1) * scale] = (15, 15, 15)
+    qh, qw = qr_img.shape[:2]
+    screen[120 : 120 + qh, 480 : 480 + qw] = qr_img
+
+    # Vẽ chân dung bên trái
+    astronaut = data.astronaut()
+    face = cv2.resize(astronaut[30:260, 160:340], (200, 260))
+    screen[120 : 120 + 260, 40 : 40 + 200] = cv2.cvtColor(face, cv2.COLOR_RGB2BGR)
+
+    # Vẽ chữ tiếng Việt có dấu bằng Pillow
+    pil_img = Image.fromarray(cv2.cvtColor(screen, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    try:
+        font_lg = ImageFont.truetype(font_path, 34)
+        font_md = ImageFont.truetype(font_path, 28)
+    except Exception:
+        font_lg = ImageFont.load_default()
+        font_md = ImageFont.load_default()
+
+    draw.text((60, 440), "Số ĐDCN: 002099012345", fill=(15, 15, 15), font=font_lg)
+    draw.text((60, 500), "LÃNH QUỐC VƯƠNG", fill=(15, 15, 15), font=font_lg)
+    draw.text((60, 560), "Ngày sinh: 15/08/1995", fill=(30, 30, 30), font=font_md)
+    draw.text((60, 610), "Giới tính: Nam", fill=(30, 30, 30), font=font_md)
+
+    screen_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    _, buf = cv2.imencode(".jpg", screen_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
+
+    response = client.post(
+        "/api/v1/cccd/verify?strict_qr=false&allow_screen=true",
+        files={"file": ("vneid_screen.jpg", io.BytesIO(buf.tobytes()), "image/jpeg")},
+    )
+    assert response.status_code == 200
+    res = response.json()
+    assert res["status"] == "success"
+    assert res["card_type"] == "VNEID_SCREEN"
+    assert res["qr_info"]["cccd_number"] == "002099012345"
+    assert res["ocr_info"]["cccd_number"] == "002099012345"
+    assert "VƯƠNG" in res["ocr_info"]["full_name"] or "VUONG" in res["ocr_info"]["full_name"]
+    assert res["portrait_base64"].startswith("data:image/jpeg;base64,")
+    assert len(res["face_embedding"]) == 512
+

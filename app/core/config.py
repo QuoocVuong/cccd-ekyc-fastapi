@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     MODELS_DIR: Path = BASE_DIR / "models"
     WECHAT_QR_DIR: Path = MODELS_DIR / "wechat_qrcode"
     DOCALIGNER_MODEL_PATH: Path = MODELS_DIR / "docaligner-lcnet100.onnx"
+    ASTERNET_MODEL_PATH: Path = MODELS_DIR / "asternet.onnx"
+    ASTERNET_VOCAB_PATH: Path = MODELS_DIR / "asternet_vocab.json"
     INSIGHTFACE_NAME: str = "buffalo_sc"
 
     # 1. Kích thước & Tiền xử lý nắn phẳng thẻ
@@ -57,16 +59,16 @@ class Settings(BaseSettings):
     # 4. Tọa độ ROI trên ảnh thẻ đã nắn phẳng 1000 x 630
     # Định dạng (y1, y2, x1, x2)
     ROI_QR: tuple[int, int, int, int] = (10, 290, 680, 990)
-    ROI_PORTRAIT: tuple[int, int, int, int] = (140, 580, 30, 370)
+    ROI_PORTRAIT: tuple[int, int, int, int] = (130, 595, 25, 375)
     ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 365, 760)
     ROI_FULL_NAME: tuple[int, int, int, int] = (325, 395, 360, 930)
 
-    # 5. Cắt ảnh chân dung, InsightFace & Face Matching
+    # 5. Cắt ảnh chân dung (lấy toàn bộ chân dung 3x4 gồm đầu + vai), InsightFace & Face Matching
     FACE_DET_SCORE_THRESHOLD: float = 0.65
     FACE_MATCH_SIMILARITY_THRESHOLD: float = 0.40  # Ngưỡng Cosine Similarity InsightFace buffalo_sc
-    FACE_CROP_WIDTH_SCALE: float = 1.60
-    FACE_CROP_HEIGHT_SCALE: float = 2.10
-    FACE_TOP_HEAD_MARGIN_RATIO: float = 0.45
+    FACE_CROP_WIDTH_SCALE: float = 2.05
+    FACE_CROP_HEIGHT_SCALE: float = 2.65
+    FACE_TOP_HEAD_MARGIN_RATIO: float = 0.36
     INSIGHTFACE_DET_SIZE: tuple[int, int] = (320, 320)
 
     # 6. Fallback Corner Detection

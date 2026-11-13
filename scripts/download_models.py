@@ -118,6 +118,20 @@ def setup_rapidocr() -> None:
         sys.exit(1)
 
 
+ASTERNET_FILES = {
+    "asternet.onnx": "https://huggingface.co/asterxlabs/asternet-vietnamese-ocr/resolve/main/asternet.onnx",
+    "asternet_vocab.json": "https://huggingface.co/asterxlabs/asternet-vietnamese-ocr/resolve/main/vocab.json",
+}
+
+
+def setup_asternet() -> None:
+    """Tải model AsterNet Vietnamese OCR ONNX (227 ký tự tiếng Việt có dấu chuẩn NFC)."""
+    print("\n=== 5. TẢI MODEL ASTERNET VIETNAMESE OCR ONNX ===")
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    for filename, url in ASTERNET_FILES.items():
+        download_file(url, MODELS_DIR / filename)
+
+
 def main() -> None:
     print("==========================================================")
     print(" BẮT ĐẦU TẢI VÀ CHUẨN BỊ MODEL CHO CCCD EKYC BACKEND ")
@@ -126,6 +140,7 @@ def main() -> None:
     setup_docaligner()
     setup_insightface()
     setup_rapidocr()
+    setup_asternet()
     print("\n==========================================================")
     print(" TẤT CẢ MODEL ĐÃ ĐƯỢC CHUẨN BỊ SẴN SÀNG! ")
     print("==========================================================")

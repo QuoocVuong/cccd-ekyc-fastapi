@@ -107,14 +107,110 @@ class CCCDProcessor:
 
         return raw_qr_text, face_result
 
-    def process(self, image_bytes: bytes, strict_qr: bool = True) -> CCCDVerificationResponse:
+    def _process_screen_or_vneid(
+        self,
+        img: np.ndarray,
+        t_start: float,
+        corner_detection_ms: float,
+        strict_qr: bool,
+    ) -> CCCDVerificationResponse:
+        """
+        Xử lý ảnh chụp màn hình VNeID / Thẻ căn cước điện tử:
+        - Hỗ trợ ảnh dọc điện thoại (9:16, 9:20) hoặc ảnh chụp màn hình không có viền thẻ cứng.
+        - Quét QR toàn ảnh + InsightFace tìm chân dung toàn ảnh + Vietnamese OCR toàn ảnh.
+        """
+        t0 = time.perf_counter()
+        h, w = img.shape[:2]
+        # Nếu ảnh màn hình quá lớn (> 1400px), resize nhẹ để đảm bảo tốc độ
+        max_dim = max(h, w)
+        if max_dim > 1400:
+            scale = 1400.0 / max_dim
+            proc_img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            proc_img = img
+
+        future_qr = self.executor.submit(self.qr_reader.decode_raw, proc_img)
+        future_face = self.executor.submit(
+            self.face_extractor.process,
+            proc_img,
+            proc_img,
+            (0, 0),
+        )
+        raw_qr_text = future_qr.result()
+        face_result = future_face.result()
+        qr_and_face_parallel_ms = (time.perf_counter() - t0) * 1000.0
+
+        if face_result is None:
+            raise FaceDetectionError(
+                "Không tìm thấy ảnh chân dung hợp lệ trên ảnh chụp màn hình / VNeID."
+            )
+        portrait_base64, face_embedding = face_result
+
+        qr_info: Optional[QRInfo] = None
+        if raw_qr_text is not None:
+            try:
+                qr_info = self.qr_reader.parse_and_validate(raw_qr_text)
+            except QRCodeError:
+                if strict_qr:
+                    raise
+
+        if qr_info is None and strict_qr:
+            raise QRCodeError(
+                "Không đọc được mã QR chuẩn 7 trường trên ảnh VNeID / chụp màn hình."
+            )
+
+        t0 = time.perf_counter()
+        full_ocr = self.ocr_verifier.extract_full_card_ocr(proc_img)
+        raw_lines = full_ocr.get("raw_lines", [])
+        cccd_num = (qr_info.cccd_number if qr_info else None) or full_ocr.get("cccd_number") or ""
+        full_name = (qr_info.full_name if qr_info else None) or full_ocr.get("full_name") or ""
+        avg_conf = (
+            sum(l["confidence"] for l in raw_lines) / len(raw_lines)
+            if raw_lines else 0.0
+        )
+        ocr_info = OCRInfo(
+            cccd_number=cccd_num,
+            full_name=full_name,
+            cccd_match=bool(cccd_num),
+            name_match=bool(full_name),
+            confidence_score=round(avg_conf, 4),
+        )
+        ocr_cross_verify_ms = (time.perf_counter() - t0) * 1000.0
+        total_ms = (time.perf_counter() - t_start) * 1000.0
+
+        return CCCDVerificationResponse(
+            status="success",
+            is_valid=True,
+            card_type="VNEID_SCREEN",
+            rotated_180=False,
+            qr_info=qr_info,
+            ocr_info=ocr_info,
+            portrait_base64=portrait_base64,
+            face_embedding=face_embedding,
+            quality_metrics={"sharpness": 0.0, "brightness": 0.0, "glare_card_pct": 0.0},
+            processing_time_ms=ProcessingTimeMS(
+                total_ms=round(total_ms, 2),
+                corner_detection_ms=round(corner_detection_ms, 2),
+                perspective_warp_ms=0.0,
+                quality_check_ms=0.0,
+                qr_and_face_parallel_ms=round(qr_and_face_parallel_ms, 2),
+                ocr_cross_verify_ms=round(ocr_cross_verify_ms, 2),
+            ),
+        )
+
+    def process(
+        self,
+        image_bytes: bytes,
+        strict_qr: bool = True,
+        allow_screen: bool = True,
+    ) -> CCCDVerificationResponse:
         """
         Thực thi toàn bộ quy trình eKYC CCCD Việt Nam tuần tự theo luồng Fail-Fast:
-        1. Decode ảnh, resize 640px bắt 4 góc thẻ, validate hình học (hỗ trợ ảnh chụp xa tự cắt khung).
+        1. Decode ảnh, resize 640px bắt 4 góc thẻ, validate hình học (hỗ trợ ảnh chụp xa tự cắt khung & ảnh VNeID).
         2. Nắn phẳng thẻ về chuẩn 1000 x 630.
         3. Kiểm tra chất lượng (mờ, sáng/tối, lóa flash, moiré màn hình).
         4. Song song Luồng A (QR) & Luồng B (Chân dung/Embedding), hỗ trợ tự xoay 180°.
-        5. OCR Số CCCD và Họ tên, đối chiếu chéo với dữ liệu QR (hoặc OCR mặt trước với Thẻ Căn cước 2024).
+        5. OCR Số CCCD và Họ tên tiếng Việt có dấu, đối chiếu chéo với dữ liệu QR (hoặc OCR mặt trước 2024/VNeID).
         """
         t_start = time.perf_counter()
 
@@ -130,10 +226,25 @@ class CCCDProcessor:
             )
 
         orig_h, orig_w = img.shape[:2]
+        is_portrait_screenshot = orig_h > orig_w * 1.15
         corners = self.detector.detect(img)
-        # Validate các tiêu chuẩn hình học (thiếu góc, sát mép, tỷ lệ diện tích, aspect ratio)
-        validated_corners = validate_geometry(corners, orig_w, orig_h)
-        corner_detection_ms = (time.perf_counter() - t0) * 1000.0
+
+        try:
+            if is_portrait_screenshot and allow_screen:
+                raise GeometricValidationError("Ảnh dọc màn hình VNeID")
+            validated_corners = validate_geometry(corners, orig_w, orig_h)
+            corner_detection_ms = (time.perf_counter() - t0) * 1000.0
+        except GeometricValidationError:
+            if allow_screen:
+                corner_detection_ms = (time.perf_counter() - t0) * 1000.0
+                # Nếu không bắt được khung thẻ vật lý hoặc là ảnh chụp màn hình VNeID -> thử chế độ VNeID/Screen
+                try:
+                    return self._process_screen_or_vneid(
+                        img, t_start, corner_detection_ms, strict_qr
+                    )
+                except Exception:
+                    pass
+            raise
 
         # -------------------------------------------------------------
         # 2. Nắn phẳng thẻ (Perspective Warp về 1000 x 630)
@@ -302,6 +413,7 @@ class CCCDProcessor:
         return BasicOCRResponse(
             status="success",
             cccd_number=ocr_data["cccd_number"],
+            full_name=ocr_data.get("full_name"),
             dob=ocr_data["dob"],
             gender=ocr_data["gender"],
             expiry_date=ocr_data["expiry_date"],

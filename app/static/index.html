@@ -749,6 +749,7 @@
               <h4>Thông tin bóc tách nhanh &amp; Các dòng văn bản</h4>
               <table class="info-table">
                 <tr><th>Số CCCD</th><td>${escapeHtml(data.cccd_number || "Không rõ")}</td></tr>
+                <tr><th>Họ và tên</th><td>${escapeHtml(data.full_name || "Không rõ")}</td></tr>
                 <tr><th>Ngày sinh</th><td>${escapeHtml(data.dob || "Không rõ")}</td></tr>
                 <tr><th>Giới tính</th><td>${escapeHtml(data.gender || "Không rõ")}</td></tr>
                 <tr><th>Có giá trị đến</th><td>${escapeHtml(data.expiry_date || "Không rõ")}</td></tr>
@@ -864,7 +865,7 @@
 
       const t0 = performance.now();
       try {
-        const res = await fetch("/api/v1/cccd/verify?strict_qr=false", {
+        const res = await fetch("/api/v1/cccd/verify?strict_qr=false&allow_screen=true", {
           method: "POST",
           body: formData,
         });
@@ -915,7 +916,12 @@
       const totalClass = t.total_ms <= 60 ? "fast" : "medium";
       const displayNumber = qr ? qr.cccd_number : ocr.cccd_number;
       const displayName = qr ? qr.full_name : ocr.full_name;
-      const cardLabel = data.card_type === "CAN_CUOC_2024" ? "Thẻ Căn cước 2024 (Không QR mặt trước)" : "CCCD gắn chip 2021 (Có QR)";
+      const cardLabels = {
+        "VNEID_SCREEN": "Ảnh chụp màn hình / VNeID",
+        "CAN_CUOC_2024": "Thẻ Căn cước 2024 (Không QR mặt trước)",
+        "CCCD_2021": "CCCD gắn chip 2021 (Có QR)",
+      };
+      const cardLabel = cardLabels[data.card_type] || "CCCD gắn chip 2021 (Có QR)";
 
       const steps = [
         { label: "1. Bắt 4 góc & Hình học", ms: t.corner_detection_ms },

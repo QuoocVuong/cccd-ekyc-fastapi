@@ -123,6 +123,7 @@ async def health_check():
             "wechat_qr": processor.qr_reader.wechat_detector is not None if processor else False,
             "insightface": processor.face_extractor.app is not None if processor else False,
             "rapid_ocr": processor.ocr_verifier.engine is not None if processor else False,
+            "vietnamese_ocr": processor.ocr_verifier.vi_rec.is_ready if processor else False,
         },
     )
 
@@ -137,14 +138,15 @@ async def health_check():
 async def verify_cccd(
     file: UploadFile = File(..., description="File ảnh thẻ CCCD định dạng JPEG, PNG, WEBP"),
     strict_qr: bool = Query(True, description="True: bắt buộc QR (CCCD 2021); False: hỗ trợ cả Thẻ Căn cước 2024"),
+    allow_screen: bool = Query(True, description="True: tự động nhận diện ảnh chụp màn hình / VNeID khi không có viền thẻ vật lý"),
 ) -> CCCDVerificationResponse:
     """
     Pipeline eKYC Fail-Fast xử lý dưới 60ms trên CPU:
-    1. Tiền xử lý, resize 640px, bắt 4 góc thẻ, validate hình học (tự cắt khung thẻ chụp xa).
+    1. Tiền xử lý, resize 640px, bắt 4 góc thẻ, validate hình học (tự cắt khung thẻ chụp xa hoặc nhận diện VNeID/màn hình).
     2. Nắn phẳng thẻ về chuẩn cố định 1000 x 630 (Perspective Warp).
     3. Kiểm tra chất lượng: Chống mờ nét, sáng/tối, lóa flash, và quét vân màn hình Moiré.
     4. Xử lý song song ROI: Đọc QR (WeChatQR/zxing) + Cắt ảnh 3x4 & Vector 512D (InsightFace), tự xoay 180°.
-    5. OCR Số CCCD và Họ tên (RapidOCR) & Đối chiếu chéo chống sửa ảnh.
+    5. OCR tiếng Việt có dấu (AsterNet + RapidOCR) & Đối chiếu chéo chống sửa ảnh.
     """
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(
@@ -160,7 +162,7 @@ async def verify_cccd(
         )
 
     processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
-    return processor.process(image_bytes, strict_qr=strict_qr)
+    return processor.process(image_bytes, strict_qr=strict_qr, allow_screen=allow_screen)
 
 
 @app.post(
