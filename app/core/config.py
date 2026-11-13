@@ -56,11 +56,12 @@ class Settings(BaseSettings):
     # Định dạng (y1, y2, x1, x2)
     ROI_QR: tuple[int, int, int, int] = (10, 290, 680, 990)
     ROI_PORTRAIT: tuple[int, int, int, int] = (140, 580, 30, 370)
-    ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 390, 760)
-    ROI_FULL_NAME: tuple[int, int, int, int] = (320, 395, 385, 920)
+    ROI_CCCD_NUMBER: tuple[int, int, int, int] = (245, 315, 365, 760)
+    ROI_FULL_NAME: tuple[int, int, int, int] = (325, 395, 360, 930)
 
-    # 5. Cắt ảnh chân dung & InsightFace
+    # 5. Cắt ảnh chân dung, InsightFace & Face Matching
     FACE_DET_SCORE_THRESHOLD: float = 0.65
+    FACE_MATCH_SIMILARITY_THRESHOLD: float = 0.40  # Ngưỡng Cosine Similarity InsightFace buffalo_sc
     FACE_CROP_WIDTH_SCALE: float = 1.60
     FACE_CROP_HEIGHT_SCALE: float = 2.10
     FACE_TOP_HEAD_MARGIN_RATIO: float = 0.45

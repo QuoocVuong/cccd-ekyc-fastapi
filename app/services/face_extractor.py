@@ -123,3 +123,51 @@ class FaceExtractor:
 
         embedding_list = normed_embedding.astype(float).tolist()
         return portrait_base64, embedding_list
+
+    def extract_selfie_embedding(self, selfie_bgr: np.ndarray) -> Tuple[list[float], float]:
+        """
+        Trích xuất vector embedding 512 chiều từ ảnh Selfie / ảnh chân dung đối chiếu.
+        Trả về (embedding_list, det_score).
+        """
+        if self.app is None:
+            raise FaceDetectionError("InsightFace model chưa được khởi tạo.")
+
+        faces = self.app.get(selfie_bgr)
+        if not faces:
+            raise FaceDetectionError(
+                "Không phát hiện được khuôn mặt trong ảnh Selfie. Vui lòng chụp thẳng mặt, đủ sáng."
+            )
+
+        valid_faces = [
+            f for f in faces if getattr(f, "det_score", 0.0) >= settings.FACE_DET_SCORE_THRESHOLD
+        ]
+        if not valid_faces:
+            raise FaceDetectionError(
+                f"Khuôn mặt trong ảnh Selfie không đủ rõ nét (độ tin cậy < {settings.FACE_DET_SCORE_THRESHOLD * 100:.0f}%)."
+            )
+
+        best_face = max(
+            valid_faces,
+            key=lambda f: float((f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
+        )
+
+        normed_embedding = best_face.normed_embedding
+        if normed_embedding is None or len(normed_embedding) == 0:
+            raise FaceDetectionError("Không thể trích xuất vector khuôn mặt từ ảnh Selfie.")
+
+        return normed_embedding.astype(float).tolist(), float(best_face.det_score)
+
+    @staticmethod
+    def compute_cosine_similarity(emb1: list[float], emb2: list[float]) -> float:
+        """
+        Tính Cosine Similarity giữa 2 vector embedding đã chuẩn hóa L2.
+        Giá trị trả về trong khoảng [-1.0, 1.0].
+        """
+        v1 = np.asarray(emb1, dtype=np.float32)
+        v2 = np.asarray(emb2, dtype=np.float32)
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 == 0.0 or norm2 == 0.0:
+            return 0.0
+        sim = float(np.dot(v1, v2) / (norm1 * norm2))
+        return max(-1.0, min(1.0, sim))

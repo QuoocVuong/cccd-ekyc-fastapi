@@ -50,3 +50,30 @@ class HealthResponse(BaseModel):
     service: str = "CCCD Vietnam eKYC Backend"
     version: str = "1.0.0"
     models_loaded: dict[str, bool]
+
+
+class FaceMatchResponse(BaseModel):
+    """Kết quả so khớp khuôn mặt 1:1 giữa ảnh Selfie và ảnh chân dung trên CCCD."""
+    status: str = "success"
+    is_match: bool = Field(..., description="True nếu cùng một người (Cosine Similarity >= ngưỡng)")
+    similarity: float = Field(..., description="Điểm tương đồng Cosine [-1.0 .. 1.0]")
+    similarity_percent: float = Field(..., description="Tỷ lệ giống nhau quy đổi ra phần trăm (0..100%)")
+    threshold: float = Field(..., description="Ngưỡng quyết định khớp khuôn mặt")
+    selfie_det_score: float = Field(..., description="Độ tin cậy phát hiện mặt trong ảnh Selfie")
+    processing_time_ms: float = Field(..., description="Thời gian xử lý so khớp (ms)")
+
+
+class BasicOCRLine(BaseModel):
+    text: str
+    confidence: float
+
+
+class BasicOCRResponse(BaseModel):
+    """Kết quả OCR cơ bản toàn bộ mặt thẻ CCCD đã nắn phẳng."""
+    status: str = "success"
+    cccd_number: Optional[str] = None
+    dob: Optional[str] = None
+    gender: Optional[str] = None
+    expiry_date: Optional[str] = None
+    raw_lines: list[BasicOCRLine] = Field(default_factory=list)
+    processing_time_ms: float = Field(..., description="Thời gian xử lý OCR toàn thẻ (ms)")

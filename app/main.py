@@ -1,15 +1,21 @@
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.core.config import settings
 from app.core.exceptions import CCCDVerificationException
-from app.schemas.cccd import CCCDVerificationResponse, HealthResponse
+from app.schemas.cccd import (
+    BasicOCRResponse,
+    CCCDVerificationResponse,
+    FaceMatchResponse,
+    HealthResponse,
+)
 from app.services.cccd_processor import CCCDProcessor
 
 # Cấu hình logging
@@ -154,3 +160,83 @@ async def verify_cccd(
 
     processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
     return processor.process(image_bytes)
+
+
+@app.post(
+    "/api/v1/cccd/face-match",
+    response_model=FaceMatchResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Face Matching"],
+    summary="So khớp khuôn mặt 1:1 (Selfie vs Chân dung CCCD)",
+)
+async def face_match(
+    selfie_file: UploadFile = File(..., description="Ảnh Selfie hoặc chụp từ Webcam"),
+    card_embedding: Optional[str] = Form(None, description="JSON mảng 512 số thực từ bước verify (tùy chọn)"),
+    cccd_file: Optional[UploadFile] = File(None, description="Ảnh thẻ CCCD nếu chưa có card_embedding"),
+) -> FaceMatchResponse:
+    """
+    So khớp khuôn mặt 1:1 bằng Cosine Similarity trên vector 512D (InsightFace buffalo_sc).
+    Có thể truyền trực tiếp `card_embedding` từ API `/verify` hoặc upload lại `cccd_file`.
+    """
+    if not selfie_file.content_type or not selfie_file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File Selfie phải là định dạng hình ảnh.",
+        )
+
+    selfie_bytes = await selfie_file.read()
+    if not selfie_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File Selfie bị rỗng.")
+
+    processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
+
+    embedding_vec: Optional[list[float]] = None
+    if card_embedding:
+        try:
+            parsed = json.loads(card_embedding)
+            if isinstance(parsed, list) and len(parsed) == 512:
+                embedding_vec = [float(x) for x in parsed]
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="card_embedding không đúng định dạng JSON mảng 512 số.",
+            )
+
+    if embedding_vec is None:
+        if cccd_file is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vui lòng cung cấp card_embedding hoặc cccd_file để đối chiếu.",
+            )
+        cccd_bytes = await cccd_file.read()
+        verify_res = processor.process(cccd_bytes)
+        embedding_vec = verify_res.face_embedding
+
+    return processor.match_face(selfie_bytes, embedding_vec)
+
+
+@app.post(
+    "/api/v1/cccd/ocr-basic",
+    response_model=BasicOCRResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["OCR"],
+    summary="OCR cơ bản đọc toàn bộ văn bản trên mặt thẻ CCCD",
+)
+async def ocr_basic(
+    file: UploadFile = File(..., description="File ảnh thẻ CCCD"),
+) -> BasicOCRResponse:
+    """
+    Chạy RapidOCR đầy đủ (Detection + Recognition) trên ảnh thẻ CCCD đã nắn phẳng
+    để trích xuất toàn bộ các dòng chữ và thông tin cơ bản trên mặt thẻ.
+    """
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File tải lên phải là định dạng hình ảnh.",
+        )
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dữ liệu file bị rỗng.")
+
+    processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
+    return processor.ocr_basic(image_bytes)

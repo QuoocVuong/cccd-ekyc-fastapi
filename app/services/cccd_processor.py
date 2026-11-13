@@ -13,7 +13,10 @@ from app.core.exceptions import (
     QRCodeError,
 )
 from app.schemas.cccd import (
+    BasicOCRLine,
+    BasicOCRResponse,
     CCCDVerificationResponse,
+    FaceMatchResponse,
     ProcessingTimeMS,
     QRInfo,
 )
@@ -207,4 +210,71 @@ class CCCDProcessor:
                 qr_and_face_parallel_ms=round(qr_and_face_parallel_ms, 2),
                 ocr_cross_verify_ms=round(ocr_cross_verify_ms, 2),
             ),
+        )
+
+    def match_face(
+        self,
+        selfie_bytes: bytes,
+        card_embedding: list[float],
+    ) -> FaceMatchResponse:
+        """
+        So khớp khuôn mặt 1:1 giữa ảnh Selfie và vector embedding 512 chiều từ thẻ CCCD.
+        """
+        t0 = time.perf_counter()
+        np_arr = np.frombuffer(selfie_bytes, np.uint8)
+        selfie_img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if selfie_img is None:
+            raise GeometricValidationError("Không thể đọc dữ liệu ảnh Selfie.")
+
+        selfie_emb, det_score = self.face_extractor.extract_selfie_embedding(selfie_img)
+        similarity = self.face_extractor.compute_cosine_similarity(card_embedding, selfie_emb)
+        is_match = similarity >= settings.FACE_MATCH_SIMILARITY_THRESHOLD
+
+        # Quy đổi phần trăm trực quan: [-1..1] -> [0..100], với threshold 0.40 ~ 70%
+        similarity_percent = max(0.0, min(100.0, (similarity + 0.2) / 1.2 * 100.0)) if similarity > 0 else 0.0
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        return FaceMatchResponse(
+            status="success",
+            is_match=is_match,
+            similarity=round(similarity, 4),
+            similarity_percent=round(similarity_percent, 1),
+            threshold=settings.FACE_MATCH_SIMILARITY_THRESHOLD,
+            selfie_det_score=round(det_score, 4),
+            processing_time_ms=round(elapsed_ms, 2),
+        )
+
+    def ocr_basic(self, image_bytes: bytes) -> BasicOCRResponse:
+        """
+        OCR cơ bản toàn bộ mặt thẻ CCCD:
+        Bắt 4 góc, nắn phẳng 1000x630 và chạy RapidOCR (use_det=True) đọc toàn bộ chữ trên thẻ.
+        """
+        t0 = time.perf_counter()
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise GeometricValidationError("Không thể đọc dữ liệu hình ảnh.")
+
+        orig_h, orig_w = img.shape[:2]
+        corners = self.detector.detect(img)
+        if corners is not None:
+            try:
+                validated = validate_geometry(corners, orig_w, orig_h)
+                warped = warp_card(img, validated)
+            except GeometricValidationError:
+                warped = img
+        else:
+            warped = img
+
+        ocr_data = self.ocr_verifier.extract_full_card_ocr(warped)
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        return BasicOCRResponse(
+            status="success",
+            cccd_number=ocr_data["cccd_number"],
+            dob=ocr_data["dob"],
+            gender=ocr_data["gender"],
+            expiry_date=ocr_data["expiry_date"],
+            raw_lines=[BasicOCRLine(**line) for line in ocr_data["raw_lines"]],
+            processing_time_ms=round(elapsed_ms, 2),
         )

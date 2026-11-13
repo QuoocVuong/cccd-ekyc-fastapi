@@ -1,6 +1,7 @@
 import logging
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from typing import Optional, Tuple
 
 import cv2
@@ -143,22 +144,30 @@ class OCRVerifier:
         norm_ocr_name = normalize_name(raw_name_text)
         norm_qr_name = normalize_name(qr_info.full_name)
 
-        # So khớp họ tên: chấp nhận nếu trùng khớp hoàn toàn chuỗi chuẩn hóa
-        # hoặc là một phần họ tên khớp nhau (ví dụ tên dài bị che khuất nhẹ)
-        name_match = (norm_ocr_name == norm_qr_name)
+        # So khớp họ tên:
+        # RapidOCR mặc định đôi khi đọc dính chữ (không dấu cách) hoặc rớt ký tự đầu có dấu
+        # Ví dụ: "LÃNH QUỐC VƯƠNG" -> "HQUOCVUONG"
+        compact_ocr = norm_ocr_name.replace(" ", "")
+        compact_qr = norm_qr_name.replace(" ", "")
+        seq_ratio = SequenceMatcher(None, compact_ocr, compact_qr).ratio() if compact_qr else 0.0
+
+        ocr_words = set(norm_ocr_name.split())
+        qr_words = set(norm_qr_name.split())
+        common_words = ocr_words.intersection(qr_words)
+        word_ratio = len(common_words) / len(qr_words) if qr_words else 0.0
+
+        name_match = (
+            norm_ocr_name == norm_qr_name
+            or word_ratio >= 0.70
+            or seq_ratio >= 0.70
+            or (len(compact_ocr) >= 6 and compact_ocr in compact_qr)
+        )
+
         if not name_match:
-            # Thử kiểm tra khoảng cách ký tự hoặc trường hợp thiếu từ đệm
-            ocr_words = set(norm_ocr_name.split())
-            qr_words = set(norm_qr_name.split())
-            common_words = ocr_words.intersection(qr_words)
-            # Nếu ít nhất 70% số từ trùng nhau hoặc chứa họ + tên chính
-            if len(qr_words) > 0 and len(common_words) / len(qr_words) >= 0.70:
-                name_match = True
-            else:
-                raise CrossVerificationError(
-                    f"Họ tên nhận diện qua OCR ('{norm_ocr_name}') không trùng khớp với mã QR ('{norm_qr_name}'). "
-                    "Cảnh báo: Nghi ngờ họ tên trên mặt thẻ bị chỉnh sửa khác biệt so với mã QR!"
-                )
+            raise CrossVerificationError(
+                f"Họ tên nhận diện qua OCR ('{norm_ocr_name}') không trùng khớp với mã QR ('{norm_qr_name}'). "
+                "Cảnh báo: Nghi ngờ họ tên trên mặt thẻ bị chỉnh sửa khác biệt so với mã QR!"
+            )
 
         return OCRInfo(
             cccd_number=ocr_digits,
@@ -167,3 +176,46 @@ class OCRVerifier:
             name_match=name_match,
             confidence_score=round(avg_conf, 4),
         )
+
+    def extract_full_card_ocr(self, warped_card: np.ndarray) -> dict:
+        """
+        OCR cơ bản trên toàn bộ mặt thẻ CCCD đã nắn phẳng (1000 x 630).
+        Sử dụng RapidOCR đầy đủ (use_det=True, use_rec=True) để trích xuất toàn bộ dòng chữ
+        và bóc tách các trường cơ bản (Số CCCD, Họ tên, Ngày sinh, Giới tính, Quốc tịch, Địa chỉ...).
+        """
+        if self.engine is None:
+            raise RuntimeError("RapidOCR engine chưa sẵn sàng.")
+
+        results, _ = self.engine(warped_card, use_det=True, use_cls=False, use_rec=True)
+        lines: list[dict] = []
+        if results:
+            for item in results:
+                if isinstance(item, (list, tuple)) and len(item) >= 3:
+                    box, text, score = item[0], str(item[1]).strip(), float(item[2])
+                    if text:
+                        lines.append({
+                            "text": text,
+                            "confidence": round(score, 4),
+                            "box": box,
+                        })
+
+        all_text = "\n".join(l["text"] for l in lines)
+        # Bóc tách nhanh các trường cơ bản bằng regex từ toàn bộ text
+        cccd_match = re.search(r"\b\d{12}\b", all_text)
+        dates = re.findall(r"\b\d{2}/\d{2}/\d{4}\b", all_text)
+        dob = dates[0] if len(dates) >= 1 else None
+        expiry_date = dates[1] if len(dates) >= 2 else None
+
+        gender = None
+        if re.search(r"\bNam\b", all_text, re.IGNORECASE):
+            gender = "Nam"
+        elif re.search(r"\bN[uữ]\b", all_text, re.IGNORECASE):
+            gender = "Nữ"
+
+        return {
+            "cccd_number": cccd_match.group(0) if cccd_match else None,
+            "dob": dob,
+            "gender": gender,
+            "expiry_date": expiry_date,
+            "raw_lines": [{"text": l["text"], "confidence": l["confidence"]} for l in lines],
+        }

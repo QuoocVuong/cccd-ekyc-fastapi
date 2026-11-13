@@ -266,3 +266,37 @@ def test_benchmark_latency():
     print("-" * 60)
     print(f" Tốc độ trung bình (End-to-End API): {avg_latency:.2f} ms / request")
     print("=" * 60)
+
+
+def test_face_match_and_ocr_basic():
+    """Kiểm tra endpoint Face Matching 1:1 và OCR cơ bản toàn thẻ."""
+    img_bytes = create_synthetic_cccd_image()
+
+    # 1. Test OCR cơ bản toàn thẻ
+    ocr_resp = client.post(
+        "/api/v1/cccd/ocr-basic",
+        files={"file": ("card.jpg", io.BytesIO(img_bytes), "image/jpeg")},
+    )
+    assert ocr_resp.status_code == 200
+    ocr_data = ocr_resp.json()
+    assert ocr_data["status"] == "success"
+    assert ocr_data["cccd_number"] == "001099012345"
+    assert len(ocr_data["raw_lines"]) >= 2
+
+    # 2. Test Face Matching 1:1 (dùng chính ảnh khuôn mặt astronaut làm selfie)
+    astronaut = data.astronaut()
+    face_bgr = cv2.cvtColor(astronaut[30:260, 160:340], cv2.COLOR_RGB2BGR)
+    _, selfie_buf = cv2.imencode(".jpg", face_bgr)
+
+    match_resp = client.post(
+        "/api/v1/cccd/face-match",
+        files={
+            "selfie_file": ("selfie.jpg", io.BytesIO(selfie_buf.tobytes()), "image/jpeg"),
+            "cccd_file": ("card.jpg", io.BytesIO(img_bytes), "image/jpeg"),
+        },
+    )
+    assert match_resp.status_code == 200
+    match_data = match_resp.json()
+    assert match_data["status"] == "success"
+    assert match_data["is_match"] is True
+    assert match_data["similarity"] >= 0.70

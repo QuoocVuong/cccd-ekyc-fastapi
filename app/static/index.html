@@ -542,9 +542,32 @@
         <button type="button" class="btn-primary" id="verifyBtn" disabled>
           Xác thực ngay
         </button>
+        <button type="button" class="btn-secondary" id="ocrBasicBtn" disabled title="Đọc toàn bộ text trên mặt thẻ bằng RapidOCR">
+          📝 OCR Cơ Bản
+        </button>
         <button type="button" class="btn-secondary" id="webcamBtn">
           📷 Camera
         </button>
+      </div>
+
+      <!-- Khu vực Face Matching 1:1 -->
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+        <div class="card-title" style="margin-bottom:10px;">
+          <span>2. Face Matching 1:1 (Selfie vs CCCD)</span>
+        </div>
+        <input type="file" id="selfieInput" accept="image/*" hidden />
+        <div class="dropzone" id="selfieDropzone" style="padding:16px 12px;">
+          <div class="dropzone-text" style="font-size:13px;">🤳 Chọn ảnh Selfie hoặc kéo thả vào đây</div>
+          <div class="dropzone-sub">Đối chiếu khuôn mặt với ảnh chân dung trên CCCD</div>
+        </div>
+        <div class="preview-box" id="selfiePreviewBox">
+          <img id="selfiePreviewImg" alt="Ảnh Selfie xem trước" style="max-height:180px;" />
+        </div>
+        <div class="btn-row">
+          <button type="button" class="btn-primary" id="faceMatchBtn" disabled style="background:#10b981;">
+            So khớp khuôn mặt
+          </button>
+        </div>
       </div>
 
       <div class="tips">
@@ -560,13 +583,15 @@
     <!-- Cột phải: Kết quả trực quan -->
     <section class="card" id="resultCard">
       <div class="card-title">
-        <span>2. Kết quả xác thực &amp; Benchmark</span>
+        <span>3. Kết quả xác thực, OCR &amp; Face Matching</span>
         <span id="rotatedBadge" class="pill" style="display:none;">↻ Đã tự xoay 180°</span>
       </div>
 
+      <div id="faceMatchResult" style="display:none; margin-bottom:16px;"></div>
+
       <div class="empty-state" id="emptyState">
         <h3>Chưa có dữ liệu kiểm tra</h3>
-        <p>Tải lên ảnh mặt trước CCCD gắn chip hoặc Thẻ Căn cước để chạy toàn bộ pipeline eKYC.</p>
+        <p>Tải lên ảnh mặt trước CCCD gắn chip hoặc Thẻ Căn cước để chạy toàn bộ pipeline eKYC, OCR cơ bản hoặc Face Matching.</p>
       </div>
 
       <div id="resultContent" style="display:none;"></div>
@@ -580,13 +605,21 @@
     const previewImg = document.getElementById("previewImg");
     const webcamVideo = document.getElementById("webcamVideo");
     const verifyBtn = document.getElementById("verifyBtn");
+    const ocrBasicBtn = document.getElementById("ocrBasicBtn");
     const webcamBtn = document.getElementById("webcamBtn");
+    const selfieInput = document.getElementById("selfieInput");
+    const selfieDropzone = document.getElementById("selfieDropzone");
+    const selfiePreviewBox = document.getElementById("selfiePreviewBox");
+    const selfiePreviewImg = document.getElementById("selfiePreviewImg");
+    const faceMatchBtn = document.getElementById("faceMatchBtn");
+    const faceMatchResult = document.getElementById("faceMatchResult");
     const healthBar = document.getElementById("healthBar");
     const emptyState = document.getElementById("emptyState");
     const resultContent = document.getElementById("resultContent");
     const rotatedBadge = document.getElementById("rotatedBadge");
 
     let selectedFile = null;
+    let selectedSelfie = null;
     let webcamStream = null;
 
     // 1. Kiểm tra /health khi tải trang
@@ -645,12 +678,144 @@
     function handleFile(file) {
       stopWebcam();
       selectedFile = file;
+      window.__lastEmbedding = null;
       const url = URL.createObjectURL(file);
       previewImg.src = url;
       previewImg.style.display = "block";
       previewBox.style.display = "block";
       verifyBtn.disabled = false;
+      ocrBasicBtn.disabled = false;
+      faceMatchBtn.disabled = !selectedSelfie;
     }
+
+    // Xử lý chọn ảnh Selfie
+    selfieDropzone.addEventListener("click", () => selfieInput.click());
+    selfieDropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      selfieDropzone.classList.add("dragover");
+    });
+    selfieDropzone.addEventListener("dragleave", () => selfieDropzone.classList.remove("dragover"));
+    selfieDropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      selfieDropzone.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleSelfie(e.dataTransfer.files[0]);
+      }
+    });
+    selfieInput.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleSelfie(e.target.files[0]);
+      }
+    });
+
+    function handleSelfie(file) {
+      selectedSelfie = file;
+      selfiePreviewImg.src = URL.createObjectURL(file);
+      selfiePreviewBox.style.display = "block";
+      faceMatchBtn.disabled = !(selectedFile || window.__lastEmbedding);
+    }
+
+    // Gọi OCR Cơ Bản (đọc toàn thẻ)
+    ocrBasicBtn.addEventListener("click", async () => {
+      if (!selectedFile) return;
+      ocrBasicBtn.disabled = true;
+      ocrBasicBtn.textContent = "Đang đọc OCR...";
+      emptyState.style.display = "none";
+      resultContent.style.display = "block";
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      try {
+        const res = await fetch("/api/v1/cccd/ocr-basic", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+          renderError(res.status, data, 0);
+        } else {
+          const linesHtml = (data.raw_lines || []).map((l, i) => `
+            <tr>
+              <th>Dòng ${i + 1}</th>
+              <td>${escapeHtml(l.text)} <span class="match-tag ok">${(l.confidence * 100).toFixed(1)}%</span></td>
+            </tr>
+          `).join("");
+          resultContent.innerHTML = `
+            <div class="status-banner success">
+              <div>
+                <div class="status-title">📝 Kết quả OCR Cơ Bản (Toàn thẻ CCCD)</div>
+                <div class="status-msg">Đọc được ${data.raw_lines.length} dòng văn bản từ mặt thẻ</div>
+              </div>
+              <div class="latency-badge fast">${data.processing_time_ms.toFixed(1)} ms</div>
+            </div>
+            <div class="section-box">
+              <h4>Thông tin bóc tách nhanh &amp; Các dòng văn bản</h4>
+              <table class="info-table">
+                <tr><th>Số CCCD</th><td>${escapeHtml(data.cccd_number || "Không rõ")}</td></tr>
+                <tr><th>Ngày sinh</th><td>${escapeHtml(data.dob || "Không rõ")}</td></tr>
+                <tr><th>Giới tính</th><td>${escapeHtml(data.gender || "Không rõ")}</td></tr>
+                <tr><th>Có giá trị đến</th><td>${escapeHtml(data.expiry_date || "Không rõ")}</td></tr>
+                ${linesHtml}
+              </table>
+            </div>
+          `;
+        }
+      } catch (err) {
+        renderError(0, { error_code: "NETWORK_ERROR", message: err.message }, 0);
+      } finally {
+        ocrBasicBtn.disabled = false;
+        ocrBasicBtn.textContent = "📝 OCR Cơ Bản";
+      }
+    });
+
+    // Gọi Face Matching 1:1 (Selfie vs CCCD)
+    faceMatchBtn.addEventListener("click", async () => {
+      if (!selectedSelfie) return;
+      faceMatchBtn.disabled = true;
+      faceMatchBtn.textContent = "Đang so khớp...";
+      emptyState.style.display = "none";
+      faceMatchResult.style.display = "block";
+
+      const formData = new FormData();
+      formData.append("selfie_file", selectedSelfie);
+      if (window.__lastEmbedding) {
+        formData.append("card_embedding", JSON.stringify(window.__lastEmbedding));
+      } else if (selectedFile) {
+        formData.append("cccd_file", selectedFile);
+      }
+
+      try {
+        const res = await fetch("/api/v1/cccd/face-match", { method: "POST", body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+          const msg = data.message || (data.detail && data.detail.message) || data.detail || "Lỗi so khớp khuôn mặt";
+          faceMatchResult.innerHTML = `
+            <div class="status-banner error">
+              <div>
+                <div class="status-title">❌ Face Matching thất bại</div>
+                <div class="status-msg">${escapeHtml(msg)}</div>
+              </div>
+            </div>
+          `;
+        } else {
+          faceMatchResult.innerHTML = `
+            <div class="status-banner ${data.is_match ? 'success' : 'error'}">
+              <div>
+                <div class="status-title">${data.is_match ? '✅ KHỚP KHUÔN MẶT (Cùng một người)' : '❌ KHÔNG KHỚP KHUÔN MẶT'}</div>
+                <div class="status-msg">
+                  Cosine Similarity: <strong>${data.similarity}</strong> (Ngưỡng: ${data.threshold}) &bull;
+                  Độ tương đồng: <strong>${data.similarity_percent}%</strong> &bull;
+                  Selfie Score: ${(data.selfie_det_score * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div class="latency-badge fast">${data.processing_time_ms.toFixed(1)} ms</div>
+            </div>
+          `;
+        }
+      } catch (err) {
+        faceMatchResult.innerHTML = `<div class="status-banner error"><div class="status-msg">${escapeHtml(err.message)}</div></div>`;
+      } finally {
+        faceMatchBtn.disabled = false;
+        faceMatchBtn.textContent = "So khớp khuôn mặt";
+      }
+    });
 
     // 3. Hỗ trợ chụp trực tiếp từ Webcam
     webcamBtn.addEventListener("click", async () => {
