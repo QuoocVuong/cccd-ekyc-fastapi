@@ -92,32 +92,41 @@ def run_batch(input_dir: Path, output_dir: Path) -> None:
             resp = processor.process(raw_bytes, strict_qr=False)
             success_count += 1
 
-            # Lưu ảnh chân dung 3x4 trích xuất
-            portrait_file = portraits_dir / f"{img_path.stem}_portrait.jpg"
-            save_portrait_from_b64(resp.portrait_base64, portrait_file)
+            # Lưu ảnh chân dung 3x4 trích xuất (nếu có)
+            portrait_file = None
+            if resp.portrait_base64:
+                portrait_file = portraits_dir / f"{img_path.stem}_portrait.jpg"
+                save_portrait_from_b64(resp.portrait_base64, portrait_file)
 
-            cccd_num = resp.qr_info.cccd_number if resp.qr_info else resp.ocr_info.cccd_number
-            full_name = resp.qr_info.full_name if resp.qr_info else resp.ocr_info.full_name
+            cccd_num = (resp.qr_info.cccd_number if resp.qr_info else None) or (resp.ocr_info.cccd_number if resp.ocr_info else "")
+            full_name = (resp.qr_info.full_name if resp.qr_info else None) or (resp.ocr_info.full_name if resp.ocr_info else "")
             qm = resp.quality_metrics or {}
+            warn_str = f" | ⚠️ {len(resp.warnings)} cảnh báo" if resp.warnings else ""
 
             print(
-                f"[{idx:02d}/{len(image_files):02d}] ✅ {img_path.name} | {resp.card_type} | "
+                f"[{idx:02d}/{len(image_files):02d}] ✅ {img_path.name} | {resp.card_type} ({resp.card_side}) | "
                 f"Số: {cccd_num} | Tên: {full_name} | "
                 f"Nét: {qm.get('sharpness')} | Sáng: {qm.get('brightness')} | "
-                f"Lóa: {qm.get('glare_card_pct')}% | {resp.processing_time_ms.total_ms:.1f} ms"
+                f"Lóa: {qm.get('glare_card_pct')}% | {resp.processing_time_ms.total_ms:.1f} ms{warn_str}"
             )
 
             entry.update({
                 "status": "success",
+                "request_id": resp.request_id,
                 "card_type": resp.card_type,
+                "card_side": resp.card_side,
+                "vneid_layout": resp.vneid_layout,
                 "rotated_180": resp.rotated_180,
                 "cccd_number": cccd_num,
                 "full_name": full_name,
-                "ocr_info": resp.ocr_info.model_dump(),
+                "ocr_info": resp.ocr_info.model_dump() if resp.ocr_info else None,
                 "qr_info": resp.qr_info.model_dump() if resp.qr_info else None,
+                "mrz_info": resp.mrz_info.model_dump() if resp.mrz_info else None,
+                "back_info": resp.back_info.model_dump() if resp.back_info else None,
+                "warnings": resp.warnings,
                 "quality_metrics": qm,
                 "processing_time_ms": resp.processing_time_ms.model_dump(),
-                "portrait_saved": str(portrait_file),
+                "portrait_saved": str(portrait_file) if portrait_file else None,
             })
 
         except CCCDVerificationException as exc:
