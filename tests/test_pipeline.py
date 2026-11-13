@@ -73,14 +73,14 @@ def create_synthetic_cccd_image(
 
     # Đặt thẻ lên ảnh nền tổng thể
     if too_small:
-        # Thẻ chiếm < 22% diện tích
-        full_img = np.full((1500, 2000, 3), 40, dtype=np.uint8)
+        # Thẻ chiếm < 4% diện tích (500*315 / (2500*2000) = 3.15% < 5%)
+        full_img = np.full((2000, 2500, 3), 40, dtype=np.uint8)
         small_card = cv2.resize(card, (500, 315))
-        full_img[500 : 500 + 315, 750 : 750 + 500] = small_card
+        full_img[800 : 800 + 315, 1000 : 1000 + 500] = small_card
     elif near_edge:
-        # Đặt thẻ sát mép trái (x < 8px)
+        # Đặt thẻ sát mép trái (x < 4px)
         full_img = np.full((960, 1280, 3), 40, dtype=np.uint8)
-        full_img[165 : 165 + 630, 2 : 2 + 1000] = card
+        full_img[165 : 165 + 630, 1 : 1 + 1000] = card
     else:
         # Chuẩn: Thẻ ở giữa, diện tích ~51%
         full_img = np.full((960, 1280, 3), 40, dtype=np.uint8)

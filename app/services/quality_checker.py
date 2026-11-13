@@ -125,7 +125,7 @@ class QualityChecker:
         peak_ratio = (max_val - mean_val) / (std_val + 1e-6)
 
         # Ngưỡng phát hiện moiré màn hình
-        threshold = 50.0
+        threshold = settings.MOIRE_MAX_PEAK_RATIO
         if peak_ratio > threshold:
             raise ImageQualityError(
                 f"Nghi ngờ thẻ CCCD được chụp lại qua màn hình thiết bị điện tử "
@@ -135,12 +135,38 @@ class QualityChecker:
 
         return peak_ratio
 
+    @staticmethod
+    def check_brightness(gray_card: np.ndarray) -> float:
+        """Kiểm tra độ sáng trung bình của thẻ (tránh quá tối hoặc cháy sáng toàn cục)."""
+        mean_val = float(np.mean(gray_card))
+        if mean_val < settings.MIN_BRIGHTNESS_MEAN:
+            raise ImageQualityError(
+                f"Ảnh thẻ quá tối (độ sáng: {mean_val:.1f} < {settings.MIN_BRIGHTNESS_MEAN:.1f}). "
+                "Vui lòng chụp ở nơi có đủ ánh sáng."
+            )
+        if mean_val > settings.MAX_BRIGHTNESS_MEAN:
+            raise ImageQualityError(
+                f"Ảnh thẻ bị cháy sáng quá mức (độ sáng: {mean_val:.1f} > {settings.MAX_BRIGHTNESS_MEAN:.1f}). "
+                "Vui lòng giảm nguồn sáng hoặc tránh ánh đèn chiếu trực tiếp."
+            )
+        return mean_val
+
     @classmethod
-    def validate_card_quality(cls, card_bgr: np.ndarray) -> None:
+    def validate_card_quality(cls, card_bgr: np.ndarray) -> dict[str, float]:
         """
         Chạy toàn bộ chuỗi kiểm tra chất lượng. Fail-fast khi phát hiện bất kỳ lỗi nào.
+        Trả về các chỉ số đo đạc để phục vụ debug/tinh chỉnh.
         """
         gray = cv2.cvtColor(card_bgr, cv2.COLOR_BGR2GRAY)
-        cls.check_sharpness(gray)
-        cls.check_glare(card_bgr)
-        cls.check_screen_replay(gray)
+        sharpness = cls.check_sharpness(gray)
+        brightness = cls.check_brightness(gray)
+        glare_metrics = cls.check_glare(card_bgr)
+        moire_score = cls.check_screen_replay(gray)
+        return {
+            "sharpness": round(sharpness, 2),
+            "brightness": round(brightness, 2),
+            "glare_card_pct": round(glare_metrics["card_glare_ratio"] * 100.0, 2),
+            "glare_qr_pct": round(glare_metrics["qr_glare_ratio"] * 100.0, 2),
+            "glare_portrait_pct": round(glare_metrics["portrait_glare_ratio"] * 100.0, 2),
+            "moire_score": round(moire_score, 2),
+        }

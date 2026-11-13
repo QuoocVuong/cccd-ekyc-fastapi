@@ -36,21 +36,23 @@ class Settings(BaseSettings):
     CORNER_DETECT_RESIZE_MAX: int = 640
 
     # 2. Ngưỡng kiểm tra hình học (Geometric Validation)
-    MIN_CORNER_BORDER_DISTANCE: int = 8  # px, tối thiểu cách mép ảnh
-    MIN_CARD_AREA_RATIO: float = 0.22    # diện tích thẻ / toàn ảnh tối thiểu
-    MAX_CARD_AREA_RATIO: float = 0.92    # diện tích thẻ / toàn ảnh tối đa
-    MIN_CARD_ASPECT_RATIO: float = 1.35  # width / height tối thiểu
-    MAX_CARD_ASPECT_RATIO: float = 1.85  # width / height tối đa (chuẩn ID-1: 1.586)
+    MIN_CORNER_BORDER_DISTANCE: int = 4   # px, tối thiểu cách mép ảnh
+    MIN_CARD_AREA_RATIO: float = 0.05     # Cho phép ảnh chụp xa (thẻ >= 5% diện tích ảnh) để tự cắt khung chuẩn
+    MAX_CARD_AREA_RATIO: float = 0.95     # Diện tích thẻ / toàn ảnh tối đa
+    MIN_CARD_ASPECT_RATIO: float = 1.30   # width / height tối thiểu
+    MAX_CARD_ASPECT_RATIO: float = 1.90   # width / height tối đa (chuẩn ID-1: 1.586)
 
     # 3. Ngưỡng kiểm tra chất lượng & Chống giả mạo (Quality & Anti-Spoof)
-    MIN_SHARPNESS_LAPLACIAN_VAR: float = 85.0  # phương sai Laplacian chống mờ/nhòe
-    GLARE_V_THRESHOLD: int = 245              # HSV Value > 245
-    GLARE_S_THRESHOLD: int = 30               # HSV Saturation < 30
-    MAX_GLARE_CARD_RATIO: float = 0.04        # Lóa toàn thẻ tối đa 4%
-    MAX_GLARE_QR_RATIO: float = 0.02          # Lóa vùng QR tối đa 2%
-    MAX_GLARE_PORTRAIT_RATIO: float = 0.025   # Lóa vùng chân dung tối đa 2.5%
-    ENABLE_MOIRE_CHECK: bool = True           # Bật/tắt kiểm tra vân màn hình
-    MOIRE_MAX_PEAK_RATIO: float = 15.0        # Ngưỡng tỉ lệ đỉnh phổ tần số cao
+    MIN_SHARPNESS_LAPLACIAN_VAR: float = 65.0  # Phương sai Laplacian chống mờ/nhòe (tinh chỉnh cho ảnh thực tế)
+    MIN_BRIGHTNESS_MEAN: float = 45.0          # Độ sáng trung bình tối thiểu (tránh ảnh quá tối)
+    MAX_BRIGHTNESS_MEAN: float = 235.0         # Độ sáng trung bình tối đa (tránh cháy sáng toàn thẻ)
+    GLARE_V_THRESHOLD: int = 250               # HSV Value > 250 (điểm lóa trắng gắt)
+    GLARE_S_THRESHOLD: int = 25                # HSV Saturation < 25
+    MAX_GLARE_CARD_RATIO: float = 0.08         # Lóa toàn thẻ tối đa 8%
+    MAX_GLARE_QR_RATIO: float = 0.05           # Lóa vùng QR tối đa 5%
+    MAX_GLARE_PORTRAIT_RATIO: float = 0.06     # Lóa vùng chân dung tối đa 6%
+    ENABLE_MOIRE_CHECK: bool = True            # Bật/tắt kiểm tra vân màn hình
+    MOIRE_MAX_PEAK_RATIO: float = 55.0         # Ngưỡng tỉ lệ đỉnh phổ tần số cao
 
     # 4. Tọa độ ROI trên ảnh thẻ đã nắn phẳng 1000 x 630
     # Định dạng (y1, y2, x1, x2)

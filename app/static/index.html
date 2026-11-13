@@ -864,7 +864,7 @@
 
       const t0 = performance.now();
       try {
-        const res = await fetch("/api/v1/cccd/verify", {
+        const res = await fetch("/api/v1/cccd/verify?strict_qr=false", {
           method: "POST",
           body: formData,
         });
@@ -910,8 +910,12 @@
 
       const qr = data.qr_info;
       const ocr = data.ocr_info;
+      const qm = data.quality_metrics || {};
       const t = data.processing_time_ms;
       const totalClass = t.total_ms <= 60 ? "fast" : "medium";
+      const displayNumber = qr ? qr.cccd_number : ocr.cccd_number;
+      const displayName = qr ? qr.full_name : ocr.full_name;
+      const cardLabel = data.card_type === "CAN_CUOC_2024" ? "Thẻ Căn cước 2024 (Không QR mặt trước)" : "CCCD gắn chip 2021 (Có QR)";
 
       const steps = [
         { label: "1. Bắt 4 góc & Hình học", ms: t.corner_detection_ms },
@@ -944,8 +948,13 @@
       resultContent.innerHTML = `
         <div class="status-banner success">
           <div>
-            <div class="status-title">✅ Xác thực CCCD hợp lệ</div>
-            <div class="status-msg">Vượt qua toàn bộ kiểm tra hình học, chống giả mạo &amp; đối chiếu chéo QR-OCR (Client RTT: ${clientMs} ms)</div>
+            <div class="status-title">✅ Xác thực hợp lệ &bull; ${escapeHtml(cardLabel)}</div>
+            <div class="status-msg">
+              Độ nét: <strong>${qm.sharpness ?? '-'}</strong> &bull;
+              Độ sáng: <strong>${qm.brightness ?? '-'}</strong> &bull;
+              Lóa thẻ/QR/Mặt: <strong>${qm.glare_card_pct ?? 0}% / ${qm.glare_qr_pct ?? 0}% / ${qm.glare_portrait_pct ?? 0}%</strong> &bull;
+              RTT: ${clientMs} ms
+            </div>
           </div>
           <div class="latency-badge ${totalClass}">${t.total_ms.toFixed(1)} ms</div>
         </div>
@@ -961,18 +970,18 @@
               <tr>
                 <th>Số CCCD</th>
                 <td>
-                  ${escapeHtml(qr.cccd_number)}
+                  ${escapeHtml(displayNumber || "Không rõ")}
                   <span class="match-tag ${ocr.cccd_match ? 'ok' : 'fail'}">
-                    ${ocr.cccd_match ? '✓ Khớp OCR 100%' : '✗ Sai lệch'}
+                    ${qr ? (ocr.cccd_match ? '✓ Khớp OCR 100%' : '✗ Sai lệch') : 'OCR'}
                   </span>
                 </td>
               </tr>
               <tr>
                 <th>Họ và tên</th>
                 <td>
-                  ${escapeHtml(qr.full_name)}
+                  ${escapeHtml(displayName || "Không rõ")}
                   <span class="match-tag ${ocr.name_match ? 'ok' : 'fail'}">
-                    ${ocr.name_match ? '✓ Khớp OCR' : '✗ Sai lệch'}
+                    ${qr ? (ocr.name_match ? '✓ Khớp OCR' : '✗ Sai lệch') : 'OCR'}
                   </span>
                 </td>
               </tr>
@@ -982,11 +991,15 @@
                   ${escapeHtml(ocr.cccd_number)} &bull; ${escapeHtml(ocr.full_name)} (Conf: ${(ocr.confidence_score * 100).toFixed(1)}%)
                 </td>
               </tr>
+              ${qr ? `
               <tr><th>Ngày sinh</th><td>${formatDate(qr.dob)}</td></tr>
               <tr><th>Giới tính</th><td>${escapeHtml(qr.gender)}</td></tr>
               <tr><th>CMND cũ</th><td>${escapeHtml(qr.old_cmnd || "Không có")}</td></tr>
               <tr><th>Nơi thường trú</th><td>${escapeHtml(qr.address)}</td></tr>
               <tr><th>Ngày cấp</th><td>${formatDate(qr.issue_date)}</td></tr>
+              ` : `
+              <tr><th>Ghi chú</th><td style="color:var(--text-muted);">Thẻ Căn cước 2024 (không có QR mặt trước) — đã trích xuất chân dung 3x4 &amp; OCR</td></tr>
+              `}
             </table>
           </div>
         </div>

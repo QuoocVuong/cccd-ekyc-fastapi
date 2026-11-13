@@ -36,11 +36,13 @@ class CCCDVerificationResponse(BaseModel):
     """Schema phản hồi kết quả xác thực eKYC CCCD thành công."""
     status: str = Field("success", description="Trạng thái xử lý")
     is_valid: bool = Field(True, description="Thẻ hợp lệ và vượt qua toàn bộ kiểm tra")
+    card_type: str = Field("CCCD_2021", description="Loại thẻ: CCCD_2021 (có QR) hoặc CAN_CUOC_2024 (không QR mặt trước)")
     rotated_180: bool = Field(False, description="Thẻ có bị xoay ngược 180 độ hay không")
-    qr_info: QRInfo = Field(..., description="Dữ liệu trích xuất từ QR")
+    qr_info: Optional[QRInfo] = Field(None, description="Dữ liệu trích xuất từ QR (nếu có)")
     ocr_info: OCRInfo = Field(..., description="Dữ liệu trích xuất và đối chiếu OCR")
     portrait_base64: str = Field(..., description="Ảnh chân dung đã cắt chuẩn tỷ lệ 3x4 (Base64 JPEG)")
     face_embedding: list[float] = Field(..., description="Vector đặc trưng khuôn mặt 512 chiều")
+    quality_metrics: Optional[dict[str, float]] = Field(None, description="Các chỉ số đo độ nét, độ sáng, độ lóa")
     processing_time_ms: ProcessingTimeMS = Field(..., description="Đo lường hiệu năng từng công đoạn")
 
 

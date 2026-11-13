@@ -17,6 +17,7 @@ from app.schemas.cccd import (
     BasicOCRResponse,
     CCCDVerificationResponse,
     FaceMatchResponse,
+    OCRInfo,
     ProcessingTimeMS,
     QRInfo,
 )
@@ -106,14 +107,14 @@ class CCCDProcessor:
 
         return raw_qr_text, face_result
 
-    def process(self, image_bytes: bytes) -> CCCDVerificationResponse:
+    def process(self, image_bytes: bytes, strict_qr: bool = True) -> CCCDVerificationResponse:
         """
         Thực thi toàn bộ quy trình eKYC CCCD Việt Nam tuần tự theo luồng Fail-Fast:
-        1. Decode ảnh, resize 640px bắt 4 góc thẻ, validate hình học.
+        1. Decode ảnh, resize 640px bắt 4 góc thẻ, validate hình học (hỗ trợ ảnh chụp xa tự cắt khung).
         2. Nắn phẳng thẻ về chuẩn 1000 x 630.
-        3. Kiểm tra chất lượng (mờ, lóa flash, moiré màn hình).
+        3. Kiểm tra chất lượng (mờ, sáng/tối, lóa flash, moiré màn hình).
         4. Song song Luồng A (QR) & Luồng B (Chân dung/Embedding), hỗ trợ tự xoay 180°.
-        5. OCR Số CCCD và Họ tên, đối chiếu chéo với dữ liệu QR.
+        5. OCR Số CCCD và Họ tên, đối chiếu chéo với dữ liệu QR (hoặc OCR mặt trước với Thẻ Căn cước 2024).
         """
         t_start = time.perf_counter()
 
@@ -130,7 +131,7 @@ class CCCDProcessor:
 
         orig_h, orig_w = img.shape[:2]
         corners = self.detector.detect(img)
-        # Validate các tiêu chuẩn hình học (thiếu góc, sát mép <8px, tỷ lệ diện tích, aspect ratio)
+        # Validate các tiêu chuẩn hình học (thiếu góc, sát mép, tỷ lệ diện tích, aspect ratio)
         validated_corners = validate_geometry(corners, orig_w, orig_h)
         corner_detection_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -145,7 +146,7 @@ class CCCDProcessor:
         # 3. Kiểm tra chất lượng ảnh & Chống giả mạo (Anti-Spoofing)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        self.quality_checker.validate_card_quality(warped)
+        quality_metrics = self.quality_checker.validate_card_quality(warped)
         quality_check_ms = (time.perf_counter() - t0) * 1000.0
 
         # -------------------------------------------------------------
@@ -168,14 +169,6 @@ class CCCDProcessor:
                 face_result = rot_face_result
                 rotated_180 = True
 
-        # Kiểm tra kết quả Luồng A (QR)
-        if raw_qr_text is None:
-            raise QRCodeError(
-                "Không thể phát hiện hoặc giải mã mã QR trên thẻ CCCD. "
-                "Vui lòng đảm bảo góc chứa mã QR không bị trầy xước, che khuất hoặc mờ mất nét."
-            )
-        qr_info = self.qr_reader.parse_and_validate(raw_qr_text)
-
         # Kiểm tra kết quả Luồng B (Ảnh chân dung & Vector)
         if face_result is None:
             raise FaceDetectionError(
@@ -183,13 +176,48 @@ class CCCDProcessor:
                 f"(yêu cầu độ tin cậy tối thiểu {settings.FACE_DET_SCORE_THRESHOLD * 100:.0f}%)."
             )
         portrait_base64, face_embedding = face_result
+
+        # Kiểm tra kết quả Luồng A (QR)
+        qr_info: Optional[QRInfo] = None
+        if raw_qr_text is not None:
+            qr_info = self.qr_reader.parse_and_validate(raw_qr_text)
+        elif strict_qr:
+            raise QRCodeError(
+                "Không thể phát hiện hoặc giải mã mã QR trên thẻ CCCD. "
+                "Nếu đây là Thẻ Căn cước mẫu 2024 (QR ở mặt sau), hãy bật chế độ hỗ trợ 2 loại thẻ (strict_qr=false)."
+            )
+
         qr_and_face_parallel_ms = (time.perf_counter() - t0) * 1000.0
 
         # -------------------------------------------------------------
-        # 5. OCR & Đối chiếu chéo chống sửa ảnh (Cross-Verification)
+        # 5. OCR & Đối chiếu chéo (hoặc OCR mặt trước Thẻ Căn cước 2024)
         # -------------------------------------------------------------
         t0 = time.perf_counter()
-        ocr_info = self.ocr_verifier.verify_and_cross_check(warped, qr_info, executor=self.executor)
+        if qr_info is not None:
+            card_type = "CCCD_2021"
+            ocr_info = self.ocr_verifier.verify_and_cross_check(warped, qr_info, executor=self.executor)
+        else:
+            card_type = "CAN_CUOC_2024"
+            full_ocr = self.ocr_verifier.extract_full_card_ocr(warped)
+            cccd_num = full_ocr.get("cccd_number") or ""
+            # Tìm dòng họ tên in hoa dài nhất sau dòng số CCCD
+            raw_lines = full_ocr.get("raw_lines", [])
+            name_guess = ""
+            for idx, line in enumerate(raw_lines):
+                if cccd_num and cccd_num in line["text"] and idx + 1 < len(raw_lines):
+                    name_guess = raw_lines[idx + 1]["text"]
+                    break
+            avg_conf = (
+                sum(l["confidence"] for l in raw_lines) / len(raw_lines)
+                if raw_lines else 0.0
+            )
+            ocr_info = OCRInfo(
+                cccd_number=cccd_num,
+                full_name=name_guess,
+                cccd_match=bool(cccd_num),
+                name_match=bool(name_guess),
+                confidence_score=round(avg_conf, 4),
+            )
         ocr_cross_verify_ms = (time.perf_counter() - t0) * 1000.0
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
@@ -197,11 +225,13 @@ class CCCDProcessor:
         return CCCDVerificationResponse(
             status="success",
             is_valid=True,
+            card_type=card_type,
             rotated_180=rotated_180,
             qr_info=qr_info,
             ocr_info=ocr_info,
             portrait_base64=portrait_base64,
             face_embedding=face_embedding,
+            quality_metrics=quality_metrics,
             processing_time_ms=ProcessingTimeMS(
                 total_ms=round(total_ms, 2),
                 corner_detection_ms=round(corner_detection_ms, 2),

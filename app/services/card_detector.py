@@ -178,9 +178,9 @@ class ContourCardDetector(BaseCardDetector):
             closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
             contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+            for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:8]:
                 area = cv2.contourArea(cnt)
-                if area < resized_area * 0.15:
+                if area < resized_area * 0.04:
                     continue
 
                 peri = cv2.arcLength(cnt, True)
@@ -194,12 +194,13 @@ class ContourCardDetector(BaseCardDetector):
                         h = np.linalg.norm(sorted_pts[3] - sorted_pts[0])
                         if h > 0:
                             ar = w / h
-                            # Chuẩn ID-1: 1.586, tính điểm lệch
-                            diff = abs(ar - 1.586)
-                            score = area / (1.0 + diff * 1000.0)
-                            if score > best_score:
-                                best_score = score
-                                best_poly = sorted_pts
+                            if 1.25 <= ar <= 1.95:
+                                # Chuẩn ID-1: 1.586, tính điểm lệch
+                                diff = abs(ar - 1.586)
+                                score = area / (1.0 + diff * 1000.0)
+                                if score > best_score:
+                                    best_score = score
+                                    best_poly = sorted_pts
                         break
 
             if best_poly is not None:

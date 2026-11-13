@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -135,13 +135,14 @@ async def health_check():
     summary="Xác thực và trích xuất dữ liệu thẻ CCCD Việt Nam",
 )
 async def verify_cccd(
-    file: UploadFile = File(..., description="File ảnh thẻ CCCD định dạng JPEG, PNG, WEBP")
+    file: UploadFile = File(..., description="File ảnh thẻ CCCD định dạng JPEG, PNG, WEBP"),
+    strict_qr: bool = Query(True, description="True: bắt buộc QR (CCCD 2021); False: hỗ trợ cả Thẻ Căn cước 2024"),
 ) -> CCCDVerificationResponse:
     """
     Pipeline eKYC Fail-Fast xử lý dưới 60ms trên CPU:
-    1. Tiền xử lý, resize 640px, bắt 4 góc thẻ, validate hình học.
+    1. Tiền xử lý, resize 640px, bắt 4 góc thẻ, validate hình học (tự cắt khung thẻ chụp xa).
     2. Nắn phẳng thẻ về chuẩn cố định 1000 x 630 (Perspective Warp).
-    3. Kiểm tra chất lượng: Chống mờ nét, lóa flash, và quét vân màn hình Moiré.
+    3. Kiểm tra chất lượng: Chống mờ nét, sáng/tối, lóa flash, và quét vân màn hình Moiré.
     4. Xử lý song song ROI: Đọc QR (WeChatQR/zxing) + Cắt ảnh 3x4 & Vector 512D (InsightFace), tự xoay 180°.
     5. OCR Số CCCD và Họ tên (RapidOCR) & Đối chiếu chéo chống sửa ảnh.
     """
@@ -159,7 +160,7 @@ async def verify_cccd(
         )
 
     processor: CCCDProcessor = getattr(app.state, "processor", None) or get_processor()
-    return processor.process(image_bytes)
+    return processor.process(image_bytes, strict_qr=strict_qr)
 
 
 @app.post(
